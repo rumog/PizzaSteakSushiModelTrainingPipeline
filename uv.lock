@@ -277,37 +277,6 @@ wheels = [
 ]
 
 [[package]]
-name = "going-modular"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "boto3", extra = ["crt"] },
-    { name = "matplotlib" },
-    { name = "requests" },
-    { name = "torch" },
-    { name = "torchvision" },
-    { name = "tqdm" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "boto3", extras = ["crt"], specifier = ">=1.43.62" },
-    { name = "matplotlib", specifier = ">=3.11.1" },
-    { name = "requests", specifier = ">=2.34.2" },
-    { name = "torch", specifier = ">=2.13.0" },
-    { name = "torchvision", specifier = ">=0.28.0" },
-    { name = "tqdm", specifier = ">=4.69.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "ruff", specifier = ">=0.16.0" }]
-
-[[package]]
 name = "idna"
 version = "3.18"
 source = { registry = "https://pypi.org/simple" }
@@ -695,6 +664,37 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e4/04/62bcd9f844984c5938d3b05264a61d797a29d3e0812341a8204af70bbdee/pillow-12.3.0-cp315-cp315t-win_amd64.whl", hash = "sha256:8cd2f7bdda092d99c9fc2fb7391354f306d01443d22785d0cbfafa2e2c8bb418", size = 7243537, upload-time = "2026-07-01T11:56:21.214Z" },
     { url = "https://files.pythonhosted.org/packages/3d/68/1f3066acedf37673694a7141381d8f811ae97f30d34413d236abe7d489f1/pillow-12.3.0-cp315-cp315t-win_arm64.whl", hash = "sha256:06ff022112bc9cbf83b60f8e028d94ad87b60621706487e65f673de61610ab59", size = 2567491, upload-time = "2026-07-01T11:56:23.506Z" },
 ]
+
+[[package]]
+name = "pizza-steak-sushi-pipeline"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "boto3", extra = ["crt"] },
+    { name = "matplotlib" },
+    { name = "requests" },
+    { name = "torch" },
+    { name = "torchvision" },
+    { name = "tqdm" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "boto3", extras = ["crt"], specifier = ">=1.43.62" },
+    { name = "matplotlib", specifier = ">=3.11.1" },
+    { name = "requests", specifier = ">=2.34.2" },
+    { name = "torch", specifier = ">=2.13.0" },
+    { name = "torchvision", specifier = ">=0.28.0" },
+    { name = "tqdm", specifier = ">=4.69.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "ruff", specifier = ">=0.16.0" }]
 
 [[package]]
 name = "pyparsing"

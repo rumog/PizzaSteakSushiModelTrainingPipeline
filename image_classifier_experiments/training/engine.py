@@ -1,3 +1,7 @@
+import copy
+import math
+from typing import Literal
+
 import torch
 from torch import nn
 from torch.optim import Optimizer
@@ -101,6 +105,12 @@ def train_model(
 ):
     """Trains a model using CrossEntropyLoss and StochasticGradientDescent with given configuration"""
 
+    # Results and checkpoint tracking
+    best_epoch = None
+    best_test_acc = float("-inf")
+    best_test_loss = None
+    best_state_dict = None
+
     results = {"train_loss": [], "train_acc": [], "test_loss": [], "test_acc": []}
 
     for epoch in tqdm(range(epochs)):
@@ -119,11 +129,33 @@ def train_model(
             accuracy_fn=accuracy_fn,
             device=device,
         )
-        # Update results
+
+        # Guard against invalid metrics to prevent saving invalid checkpoints
+        if not all(
+            math.isfinite(metric)
+            for metric in [train_loss, train_acc, test_loss, test_acc]
+        ):
+            raise RuntimeError(
+                f"Invalid metrics encountered. "
+                f"Train loss: {train_loss}, Train accuracy: {train_acc}, "
+                f"Test loss: {test_loss}, Test accuracy: {test_acc}"
+            )
+
+        # Update results and best checkpoint tracking
         results["train_loss"].append(train_loss)
         results["train_acc"].append(train_acc)
         results["test_loss"].append(test_loss)
         results["test_acc"].append(test_acc)
+
+        # Accuracy will be our measure for best- so "best[metric]" here really
+        # means- [metric] associated with best accuracy. Want to make this clear
+        if test_acc > best_test_acc:
+            best_test_acc = test_acc
+            best_test_loss = test_loss
+            best_epoch = epoch
+            # MAKE SURE this is a deep copy- not just a copy of the reference which
+            # always poitns to the most current state of the model's state_dict
+            best_state_dict = copy.deepcopy(model.state_dict())
 
         if epochs > 10:
             if epoch % 10 == 0:
@@ -134,4 +166,19 @@ def train_model(
             tqdm.write(
                 f"Epoch: {epoch} -- Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f}\n"
             )
-    return results
+    # Ensure training ran and we have a valid trained checkpoint
+    if best_state_dict is None or best_epoch is None:
+        raise RuntimeError(
+            "Training completed without producing a checkpoint. Check that epochs > 0."
+        )
+
+    train_results = {
+        "history": results,
+        "best_checkpoint": {
+            "epoch": best_epoch,
+            "test_acc": best_test_acc,
+            "test_loss": best_test_loss,
+            "state_dict": best_state_dict,
+        },
+    }
+    return train_results
