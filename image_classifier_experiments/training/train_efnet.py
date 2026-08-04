@@ -5,10 +5,12 @@ from zoneinfo import ZoneInfo
 import torch
 import torchvision
 from torch import nn
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from image_classifier_experiments.data_setup import data_setup
 from image_classifier_experiments.model_build.efficient_net_b0 import EfficientNetB0Pss
 from image_classifier_experiments.training import engine
+from image_classifier_experiments.training.arg_parser import parse_train_args
 from image_classifier_experiments.utils.helper_functions import (
     accuracy_fn,
     plot_loss_curves,
@@ -16,20 +18,23 @@ from image_classifier_experiments.utils.helper_functions import (
     save_model_checkpoint_s3,
 )
 
-MODEL_NAME = "EfficientNetB0Pss_ep2_20260802_020056_v0.0.pth"
 S3_MODEL_BUCKET = "pss-classifier-models-613693331461-us-west-2-an"
 MODEL_KEY_PREFIX = "pss-classifier/0.1.0"
 
 # training and model hyperparams
-EPOCHS = 2
-BATCH_SIZE = 32
 NUM_WORKERS = 0  # os.cpu_count()
 DATA_PATH_PARENT_DIR = "data/"
 IMAGE_PATH_PARENT_DIR = "pizza_steak_sushi_100_percent"
 MODEL_SAVE_DIR = "model"
-LEARNING_RATE = 0.001
 IMAGE_SIZE = (224, 224)
-SAVE_MODEL = "file"  # None, s3, file
+
+torch.manual_seed(42)
+torch.mps.manual_seed(42)
+
+data_path = Path(DATA_PATH_PARENT_DIR)
+image_path = data_path / IMAGE_PATH_PARENT_DIR
+train_dir = image_path / "train"
+test_dir = image_path / "test"
 
 
 def redact_dict(d):
@@ -52,17 +57,15 @@ def redact_dict(d):
     return new_dict
 
 
-torch.manual_seed(42)
-torch.mps.manual_seed(42)
-
-data_path = Path(DATA_PATH_PARENT_DIR)
-image_path = data_path / IMAGE_PATH_PARENT_DIR
-train_dir = image_path / "train"
-test_dir = image_path / "test"
+args = parse_train_args()
+print(f"Args passed: {args}")
 
 # Hard code device for compatibility with M1 mac for now
 # change this if expanding.
 device = "mps" if torch.mps.is_available() else "cpu"
+
+# Handle commandline arg parsing
+
 
 # Create a simple transform with minimal augmentaiton.
 # Can expand on this with a collection of common transforms used
@@ -74,33 +77,53 @@ simple_train_dataloader, simple_test_dataloader, class_list = (
         train_dir,
         test_dir,
         transform,
-        batch_size=BATCH_SIZE,
+        batch_size=args.batch_size,
         num_workers=NUM_WORKERS,
         shuffle_train=True,
     )
 )
 
+# Create model instance
 model_0 = EfficientNetB0Pss(num_classes=len(class_list)).to(device)
 
+# Create loss function, lr scheduler, and optimizer
 loss_fn = nn.CrossEntropyLoss()
-optimizer = torch.optim.Adam(params=model_0.parameters(), lr=LEARNING_RATE)
+optimizer = torch.optim.AdamW(
+    params=model_0.parameters(),
+    lr=args.lr,
+    weight_decay=args.weight_decay,
+)
+# min mode, as we will monitor and react to loss metric
+
+scheduler = None
+if args.lr_schedule_patience is not None:
+    print(
+        f"schedule_patience set to {args.lr_schedule_patience}, creating lr scheduler"
+    )
+    scheduler = ReduceLROnPlateau(
+        optimizer=optimizer,
+        mode="min",
+        factor=0.1,
+        patience=args.lr_schedule_patience,
+    )
 
 results = engine.train_model(
     model=model_0,
     train_dataloader=simple_train_dataloader,
     test_dataloader=simple_test_dataloader,
     optimizer=optimizer,
+    scheduler=scheduler,
     loss_fn=loss_fn,
     accuracy_fn=accuracy_fn,
-    epochs=EPOCHS,
+    epochs=args.epochs,
     device=device,
+    patience=args.early_stop_patience,
 )
-
 
 print(f"train_model output: {redact_dict(results)}")
 
 # Save model if requested
-if SAVE_MODEL:
+if args.save is not None:
     model_architecture_name = model_0.__class__.__name__
 
     # MODEL_NAME = "intro_pytorch_computer_vision_model_2.pth"
@@ -130,19 +153,21 @@ if SAVE_MODEL:
     timestamp = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y%m%d_%H%M%S")
     filename = f"{model_architecture_name}_ep{results['best_checkpoint']['epoch']}_{timestamp}_v{version}.pth"
 
-    if SAVE_MODEL == "s3":
+    if args.save == "s3":
         save_model_checkpoint_s3(
             state_dict=results["best_checkpoint"]["state_dict"],
             model_metadata=model_metadata,
             bucket_name=S3_MODEL_BUCKET,
             object_key=f"{MODEL_KEY_PREFIX}/{filename}",
         )
-    elif SAVE_MODEL == "file":
+    elif args.save == "file":
         save_model_checkpoint(
             state_dict=results["best_checkpoint"]["state_dict"],
             model_metadata=model_metadata,
             target_dir=MODEL_SAVE_DIR,
             file_name=filename,
         )
+else:
+    print(f"args.save = {args.save}, skipping checkpoint artifact save")
 
 plot_loss_curves(results["history"])

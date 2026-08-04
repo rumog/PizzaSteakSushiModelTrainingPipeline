@@ -1,12 +1,16 @@
 import copy
 import math
-from typing import Literal
+from typing import Any
 
 import torch
 from torch import nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+
+
+def get_current_lr(optimizer):
+    return optimizer.param_groups[0]["lr"]
 
 
 def train_step(
@@ -93,6 +97,13 @@ def test_step(
     return test_loss, test_acc
 
 
+# Keeping a note here on patience, move this somewhre when yu get a chance
+# Learning Rate Schedules: Early stopping patience must always be longer than your Learning Rate (LR)
+# scheduler's patience or decay frequency. If you use a ReduceLROnPlateau scheduler with a patience of 3,
+# your early stopping patience should be around 7–10 epochs to give the
+# model time to stabilize and find a better local minimum at the lower learning rate.
+
+
 def train_model(
     model: nn.Module,
     train_dataloader: DataLoader,
@@ -101,7 +112,9 @@ def train_model(
     loss_fn: nn.Module,
     accuracy_fn,
     epochs: int = 3,
-    device: torch.device = None,
+    patience: int | None = None,
+    scheduler: Any | None = None,
+    device: torch.device | None = None,
 ):
     """Trains a model using CrossEntropyLoss and StochasticGradientDescent with given configuration"""
 
@@ -110,8 +123,18 @@ def train_model(
     best_test_acc = float("-inf")
     best_test_loss = None
     best_state_dict = None
+    best_lr = None
 
-    results = {"train_loss": [], "train_acc": [], "test_loss": [], "test_acc": []}
+    epochs_without_improvement = 0
+    epochs_completed = 0
+
+    results = {
+        "train_loss": [],
+        "train_acc": [],
+        "test_loss": [],
+        "test_acc": [],
+        "lr": [],
+    }
 
     for epoch in tqdm(range(epochs)):
         train_loss, train_acc = train_step(
@@ -141,11 +164,24 @@ def train_model(
                 f"Test loss: {test_loss}, Test accuracy: {test_acc}"
             )
 
+        epochs_completed += 1
+        epoch_lr = get_current_lr(optimizer)
         # Update results and best checkpoint tracking
         results["train_loss"].append(train_loss)
         results["train_acc"].append(train_acc)
         results["test_loss"].append(test_loss)
         results["test_acc"].append(test_acc)
+        results["lr"].append(epoch_lr)
+
+        if epochs > 50:
+            if epoch % 10 == 0:
+                tqdm.write(
+                    f"Epoch: {epoch} -- LR: {epoch_lr} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} | Epochs w/o accuracy impr: {epochs_without_improvement}\n"
+                )
+        else:
+            tqdm.write(
+                f"Epoch: {epoch} -- LR: {epoch_lr} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} Epochs w/o accuracy impr: {epochs_without_improvement}\n"
+            )
 
         # Accuracy will be our measure for best- so "best[metric]" here really
         # means- [metric] associated with best accuracy. Want to make this clear
@@ -153,19 +189,36 @@ def train_model(
             best_test_acc = test_acc
             best_test_loss = test_loss
             best_epoch = epoch
+            best_lr = epoch_lr
             # MAKE SURE this is a deep copy- not just a copy of the reference which
             # always poitns to the most current state of the model's state_dict
             best_state_dict = copy.deepcopy(model.state_dict())
 
-        if epochs > 10:
-            if epoch % 10 == 0:
-                tqdm.write(
-                    f"Epoch: {epoch} -- Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f}\n"
-                )
+            # reset epochs without improvement
+            epochs_without_improvement = 0
         else:
+            # increment epochs without improvement
+            epochs_without_improvement += 1
+
+        # stop early if epochs without improvement breaches patience
+        if patience is not None:
             tqdm.write(
-                f"Epoch: {epoch} -- Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f}\n"
+                f"early stop patience set to {patience}, checking early stop conditions"
             )
+            if epochs_without_improvement >= patience:
+                tqdm.write(
+                    f"patience value: {patience} was supplied, checking for early stoppage"
+                )
+                tqdm.write(
+                    f"Early stopping triggered at epoch {epoch}. Best epoch: {best_epoch}"
+                )
+                break
+
+        # prepare next epoch
+        if scheduler is not None:
+            tqdm.write("scheduler was provided, stepping scheduler")
+            scheduler.step(test_loss)
+
     # Ensure training ran and we have a valid trained checkpoint
     if best_state_dict is None or best_epoch is None:
         raise RuntimeError(
@@ -174,8 +227,14 @@ def train_model(
 
     train_results = {
         "history": results,
+        "train_metadata": {
+            "epochs_completed": epochs_completed,
+            "epochs_scheduled": epochs,
+            "stopped_early": epochs_completed < epochs,
+        },
         "best_checkpoint": {
             "epoch": best_epoch,
+            "epoch_lr": best_lr,
             "test_acc": best_test_acc,
             "test_loss": best_test_loss,
             "state_dict": best_state_dict,
