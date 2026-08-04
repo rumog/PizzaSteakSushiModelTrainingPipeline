@@ -6,6 +6,7 @@ import torch
 from torch import nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 
@@ -115,6 +116,7 @@ def train_model(
     patience: int | None = None,
     scheduler: Any | None = None,
     device: torch.device | None = None,
+    writer: SummaryWriter | None = None,
 ):
     """Trains a model using CrossEntropyLoss and StochasticGradientDescent with given configuration"""
 
@@ -166,6 +168,7 @@ def train_model(
 
         epochs_completed += 1
         epoch_lr = get_current_lr(optimizer)
+
         # Update results and best checkpoint tracking
         results["train_loss"].append(train_loss)
         results["train_acc"].append(train_acc)
@@ -173,14 +176,52 @@ def train_model(
         results["test_acc"].append(test_acc)
         results["lr"].append(epoch_lr)
 
-        if epochs > 50:
-            if epoch % 10 == 0:
-                tqdm.write(
-                    f"Epoch: {epoch} -- LR: {epoch_lr} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} | Epochs w/o accuracy impr: {epochs_without_improvement}\n"
-                )
-        else:
-            tqdm.write(
-                f"Epoch: {epoch} -- LR: {epoch_lr} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} Epochs w/o accuracy impr: {epochs_without_improvement}\n"
+        # Also update writer for TensorBoard integration
+        if writer is not None:
+            # Plot Test vs Train on same graph for loss/acc
+            writer.add_scalars(
+                "Loss Comparison",
+                {
+                    "train": train_loss,
+                    "test": test_loss,
+                },
+                epoch,
+            )
+
+            writer.add_scalars(
+                "Accuracy Comparison",
+                {
+                    "train": train_acc,
+                    "test": test_acc,
+                },
+                epoch,
+            )
+
+            # plot individual graphs
+            writer.add_scalar(
+                "Loss/train",
+                train_loss,
+                epoch,
+            )
+            writer.add_scalar(
+                "Loss/test",
+                test_loss,
+                epoch,
+            )
+            writer.add_scalar(
+                "Accuracy/train",
+                train_acc,
+                epoch,
+            )
+            writer.add_scalar(
+                "Accuracy/test",
+                test_acc,
+                epoch,
+            )
+            writer.add_scalar(
+                "Learning Rate",
+                epoch_lr,
+                epoch,
             )
 
         # Accuracy will be our measure for best- so "best[metric]" here really
@@ -199,6 +240,16 @@ def train_model(
         else:
             # increment epochs without improvement
             epochs_without_improvement += 1
+
+        if epochs > 50:
+            if epoch % 10 == 0:
+                tqdm.write(
+                    f"Epoch: {epoch} -- LR: {epoch_lr} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} | Epochs w/o accuracy impr: {epochs_without_improvement}\n"
+                )
+        else:
+            tqdm.write(
+                f"Epoch: {epoch} -- LR: {epoch_lr} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} Epochs w/o accuracy impr: {epochs_without_improvement}\n"
+            )
 
         # stop early if epochs without improvement breaches patience
         if patience is not None:

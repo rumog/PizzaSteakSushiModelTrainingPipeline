@@ -6,6 +6,7 @@ import torch
 import torchvision
 from torch import nn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.utils.tensorboard import SummaryWriter
 
 from image_classifier_experiments.data_setup import data_setup
 from image_classifier_experiments.model_build.efficient_net_b0 import EfficientNetB0Pss
@@ -60,6 +61,12 @@ def redact_dict(d):
 args = parse_train_args()
 print(f"Args passed: {args}")
 
+# Tensorboard integration
+timestamp = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y%m%d_%H%M%S")
+
+run_name = f"efnet_b0_ep{args.epochs}_lr{args.lr}_esp{args.early_stop_patience}_lrp{args.lr_schedule_patience}_wd{args.weight_decay}_ts_{timestamp}"
+writer = SummaryWriter(log_dir=f"runs/efficientnet_b0/{run_name}")
+
 # Hard code device for compatibility with M1 mac for now
 # change this if expanding.
 device = "mps" if torch.mps.is_available() else "cpu"
@@ -107,18 +114,40 @@ if args.lr_schedule_patience is not None:
         patience=args.lr_schedule_patience,
     )
 
-results = engine.train_model(
-    model=model_0,
-    train_dataloader=simple_train_dataloader,
-    test_dataloader=simple_test_dataloader,
-    optimizer=optimizer,
-    scheduler=scheduler,
-    loss_fn=loss_fn,
-    accuracy_fn=accuracy_fn,
-    epochs=args.epochs,
-    device=device,
-    patience=args.early_stop_patience,
-)
+try:
+    results = engine.train_model(
+        model=model_0,
+        train_dataloader=simple_train_dataloader,
+        test_dataloader=simple_test_dataloader,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        loss_fn=loss_fn,
+        accuracy_fn=accuracy_fn,
+        epochs=args.epochs,
+        device=device,
+        patience=args.early_stop_patience,
+        writer=writer,
+    )
+    # collect hyperparams,
+    writer.add_hparams(
+        {
+            "lr": args.lr,
+            "weight_decay": args.weight_decay,
+            "batch_size": args.batch_size,
+            "scheduled_epochs": args.epochs,
+            "early_stop_patience": args.early_stop_patience,
+            "lr_schedule_patience": args.lr_schedule_patience,
+        },
+        {
+            "best_accuracy": results["best_checkpoint"]["test_acc"],
+            "best_loss": results["best_checkpoint"]["test_loss"],
+            "epochs_completed": results["train_metadata"]["epochs_completed"],
+            "early_stopped": results["train_metadata"]["stopped_early"],
+        },
+    )
+finally:
+    # collect hyperparams, close TensorBoard writer
+    writer.close()
 
 print(f"train_model output: {redact_dict(results)}")
 
@@ -170,4 +199,4 @@ if args.save is not None:
 else:
     print(f"args.save = {args.save}, skipping checkpoint artifact save")
 
-plot_loss_curves(results["history"])
+# plot_loss_curves(results["history"])

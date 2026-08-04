@@ -8,6 +8,7 @@ wheels/
 
 #ignore heavy ML assets
 data/
+runs/
 model/
 *.pth
 *.pt
