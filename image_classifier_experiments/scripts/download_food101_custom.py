@@ -95,7 +95,10 @@ def download_food_101_custom(
     )
 
     # Create target directory path
-    sub_dir = "_".join(target_classes)
+    if len(target_classes) <= 3:
+        sub_dir = "_".join(target_classes)
+    else:
+        sub_dir = f"food_classifier_{len(target_classes)}"
     target_dir_name = f"{data_dir}/{sub_dir}_{str(int(amount * 100))}_percent"
 
     # Setup the directories
@@ -140,12 +143,22 @@ def walk_through_dir(dir_path):
 
 
 # download_food_101(DATA_DIR)
+class_list = [
+    "pizza",
+    "steak",
+    "sushi",
+    "waffles",
+    "pancakes",
+    "ramen",
+    "gyoza",
+    "takoyaki",
+    "nachos",
+    "ice_cream",
+]
+download_food_101_custom(DATA_DIR, SOURCE_IMG_DIR, SOURCE_META_DIR, class_list, 1)
+# waffles, takoyaki, ramen, nachos, gyoza, hamburger, fish_and_chips, creme_brulee, chicken_wings, ice_cream
+# pancakes, tacos
 
-# download_food_101_custom(
-#    DATA_DIR, SOURCE_IMG_DIR, SOURCE_META_DIR, ["pizza", "steak", "sushi"], 1
-# )
-
-
-walk_through_dir("data/pizza_steak_sushi_50_percent")
-walk_through_dir("data/pizza_steak_sushi_75_percent")
-walk_through_dir("data/pizza_steak_sushi_100_percent")
+# walk_through_dir("data/pizza_steak_sushi_50_percent")
+# walk_through_dir("data/pizza_steak_sushi_75_percent")
+# walk_through_dir("data/pizza_steak_sushi_100_percent")

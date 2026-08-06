@@ -25,7 +25,7 @@ MODEL_KEY_PREFIX = "pss-classifier/0.1.0"
 # training and model hyperparams
 NUM_WORKERS = 0  # os.cpu_count()
 DATA_PATH_PARENT_DIR = "data/"
-IMAGE_PATH_PARENT_DIR = "pizza_steak_sushi_100_percent"
+IMAGE_PATH_PARENT_DIR = "food_classifier_10_100_percent"
 MODEL_SAVE_DIR = "model"
 IMAGE_SIZE = (224, 224)
 
