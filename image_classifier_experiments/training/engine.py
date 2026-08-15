@@ -1,5 +1,6 @@
 import copy
 import math
+from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -50,6 +51,7 @@ def train_step(
     optimizer: Optimizer,
     accuracy_fn,
     device: torch.device = None,
+    gpu_transform: Callable = None,
 ):
 
     # 0. Put model into training mode
@@ -65,6 +67,11 @@ def train_step(
             X_batch.to(device, non_blocking=True),
             y_batch.to(device, non_blocking=True),
         )
+
+        # GPU transform is enabled, perform transform now
+        if gpu_transform is not None:
+            X_batch = X_batch.float().div_(255.0)
+            X_batch = gpu_transform(X_batch)
 
         # 1. Forward Pass
         y_logits = model(X_batch)
@@ -155,6 +162,7 @@ def train_model(
     device: torch.device | None = None,
     writer: SummaryWriter | None = None,
     caching_enabled: bool = False,
+    gpu_transform: Callable = None,
 ):
     """Trains a model using CrossEntropyLoss and StochasticGradientDescent with given configuration"""
 
@@ -195,6 +203,7 @@ def train_model(
             optimizer=optimizer,
             accuracy_fn=accuracy_fn,
             device=device,
+            gpu_transform=gpu_transform,
         )
         test_loss, test_acc = test_step(
             model=train_model,
