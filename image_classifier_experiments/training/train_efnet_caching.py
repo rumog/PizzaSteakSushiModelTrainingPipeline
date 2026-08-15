@@ -95,7 +95,7 @@ def run_training():
 
     if ENABLE_CUSTOM_AUGMENTATION == True:
         ## Custom, currently hard coded autmentation pipeline for testing
-        transforms.Compose(
+        train_transform = transforms.Compose(
             [
                 transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
                 transforms.RandomHorizontalFlip(),
@@ -112,10 +112,16 @@ def run_training():
                 ),
             ]
         )
+        print(
+            f"ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} - Using custom augmentation pipeline: {train_transform}"
+        )
     else:
         # Use the default EfficientNet_B0 transform pre-processing
         # For training as well as testing
         train_transform = test_transform
+        print(
+            f"ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} - Using default EfficientNetB0 Transform: {train_transform}"
+        )
 
     simple_train_dataloader, simple_test_dataloader, class_list = (
         data_setup.create_image_folder_dataloaders(
@@ -138,7 +144,7 @@ def run_training():
     start_time = timer()
     if FEATURE_CACHE_ENABLED and not ENABLE_CUSTOM_AUGMENTATION:
         print(
-            f"FEATURE_CACHE_ENABLED: {FEATURE_CACHE_ENABLED}, ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} - extracting and saving backbonefeatures"
+            f"FEATURE_CACHE_ENABLED: {FEATURE_CACHE_ENABLED}, ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} - extracting and saving backbonefeatures "
             f"and creating feature-based dataloaders for train/test"
         )
         if not Path(CACHED_FEATURES_TRAIN_PATH).is_file():
@@ -168,7 +174,7 @@ def run_training():
         )
     else:
         print(
-            f"FEATURE_CACHE_ENABLED: {FEATURE_CACHE_ENABLED}, ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} - SKIPPING bakcbone caching"
+            f"FEATURE_CACHE_ENABLED: {FEATURE_CACHE_ENABLED}, ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} - SKIPPING bakcbone caching "
             f"and creating image-based dataloaders for train/test"
         )
         train_dataloader = simple_train_dataloader
