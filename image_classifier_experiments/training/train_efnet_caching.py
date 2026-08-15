@@ -31,7 +31,12 @@ from image_classifier_experiments.utils.helper_functions import (
 # MODEL_KEY_PREFIX = "pss-classifier/0.1.0"
 
 DEFAULT_WEIGHTS = torchvision.models.EfficientNet_B0_Weights.DEFAULT
-RAW_TRANSFORM = transforms.PILToTensor()
+RAW_TRANSFORM = transforms.Compose(
+    [
+        transforms.Resize((500, 500)),
+        transforms.PILToTensor(),
+    ]
+)
 # training and model hyperparams
 NUM_WORKERS = 3
 DATA_PATH_PARENT_DIR = "data/"
@@ -253,7 +258,7 @@ def run_training():
             f"ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} "
             f"ENABLE_GPU_AUGMENTATION: {ENABLE_GPU_AUGMENTATION} "
             f"FEATURE_CACHE_ENABLED: {FEATURE_CACHE_ENABLED} "
-            f"- Using default EfficientNetB0 Transform: {train_transform}"
+            f"- setting gpu_transform : {GPU_AUGMENTATION_PIPELINE}"
         )
         gpu_transform = GPU_AUGMENTATION_PIPELINE
     else:
