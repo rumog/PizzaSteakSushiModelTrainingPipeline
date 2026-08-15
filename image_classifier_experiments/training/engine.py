@@ -61,7 +61,10 @@ def train_step(
     # For each batch
     for batch, (X_batch, y_batch) in enumerate(dataloader):
         # Move data to device
-        X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+        X_batch, y_batch = (
+            X_batch.to(device, non_blocking=True),
+            y_batch.to(device, non_blocking=True),
+        )
 
         # 1. Forward Pass
         y_logits = model(X_batch)
@@ -110,7 +113,10 @@ def test_step(
     # For each batch
     for batch, (X_batch, y_batch) in enumerate(dataloader):
         # 0. Move data to device
-        X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+        X_batch, y_batch = (
+            X_batch.to(device, non_blocking=True),
+            y_batch.to(device, non_blocking=True),
+        )
 
         # 1. Forward Pass
         with torch.inference_mode():

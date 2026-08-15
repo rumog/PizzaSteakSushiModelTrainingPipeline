@@ -64,12 +64,18 @@ def create_image_folder_dataloaders(
         batch_size=batch_size,
         num_workers=num_workers,
         shuffle=shuffle_train,
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=2,
     )
     test_dataloader = DataLoader(
         dataset=test_dataset,
         batch_size=batch_size,
         num_workers=num_workers,
         shuffle=False,
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=2,
     )
     class_names = train_dataset.classes
 
