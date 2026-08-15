@@ -30,7 +30,7 @@ from image_classifier_experiments.utils.helper_functions import (
 # MODEL_KEY_PREFIX = "pss-classifier/0.1.0"
 
 # training and model hyperparams
-NUM_WORKERS = 4  # os.cpu_count()
+NUM_WORKERS = os.cpu_count()
 DATA_PATH_PARENT_DIR = "data/"
 IMAGE_PATH_PARENT_DIR = "seattlement_birds_50_100_percent"
 MODEL_SAVE_DIR = "model"
