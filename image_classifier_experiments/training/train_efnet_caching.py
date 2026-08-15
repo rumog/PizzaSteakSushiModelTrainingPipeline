@@ -9,8 +9,12 @@ import torchvision
 from torch import nn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
+from torchvision import transforms
 
 from image_classifier_experiments.data_setup import data_setup
+from image_classifier_experiments.data_setup.cached_features_dataset import (
+    CatchedFeaturesDataset,
+)
 from image_classifier_experiments.model_build.efficient_net_b0 import EfficientNetB0Pss
 from image_classifier_experiments.training import engine
 from image_classifier_experiments.training.arg_parser import parse_train_args
@@ -28,10 +32,13 @@ from image_classifier_experiments.utils.helper_functions import (
 # training and model hyperparams
 NUM_WORKERS = 4  # os.cpu_count()
 DATA_PATH_PARENT_DIR = "data/"
-IMAGE_PATH_PARENT_DIR = "food_classifier_10_100_percent"
+IMAGE_PATH_PARENT_DIR = "seattlement_birds_50_100_percent"
 MODEL_SAVE_DIR = "model"
 IMAGE_SIZE = (224, 224)
-FEATURE_CACHE_ENABLED = True
+FEATURE_CACHE_ENABLED = False
+ENABLE_CUSTOM_AUGMENTATION = True
+CACHED_FEATURES_TRAIN_PATH = "model/cached_features/train.pt"
+CACHED_FEATURES_TEST_PATH = "model/cached_features/test.pt"
 torch.manual_seed(42)
 torch.mps.manual_seed(42)
 
@@ -73,20 +80,49 @@ def run_training():
 
     # Hard code device for compatibility with M1 mac for now
     # change this if expanding.
-    device = "mps" if torch.mps.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
 
     # Handle commandline arg parsing
 
-    # Create a simple transform with minimal augmentaiton.
-    # Can expand on this with a collection of common transforms used
-    # for experimentation.
-    transform = torchvision.models.EfficientNet_B0_Weights.DEFAULT.transforms()
+    # Get default EfficientNet_B0 pre_processing transform
+    default_weights = torchvision.models.EfficientNet_B0_Weights.DEFAULT
+    test_transform = default_weights.transforms()
+
+    if ENABLE_CUSTOM_AUGMENTATION == True:
+        ## Custom, currently hard coded autmentation pipeline for testing
+        transforms.Compose(
+            [
+                transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
+                transforms.RandomHorizontalFlip(),
+                transforms.ColorJitter(
+                    brightness=0.2,
+                    contrast=0.2,
+                    saturation=0.2,
+                    hue=0.05,
+                ),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=default_weights.transforms().mean,
+                    std=default_weights.transforms().std,
+                ),
+            ]
+        )
+    else:
+        # Use the default EfficientNet_B0 transform pre-processing
+        # For training as well as testing
+        train_transform = test_transform
 
     simple_train_dataloader, simple_test_dataloader, class_list = (
-        data_setup.create_dataloaders(
+        data_setup.create_image_folder_dataloaders(
             train_dir,
             test_dir,
-            transform,
+            train_transform,
+            test_transform,
             batch_size=args.batch_size,
             num_workers=NUM_WORKERS,
             shuffle_train=True,
@@ -95,6 +131,48 @@ def run_training():
 
     # Create model instance
     model_0 = EfficientNetB0Pss(num_classes=len(class_list)).to(device)
+
+    # If feature caching enabled, we need to run a single forward pass and cache backbone features
+    # Keep in mind that this will not be effective if randomized autmentation is enabled, so
+    # Force disable using both here and default to not caching backbone
+    start_time = timer()
+    if FEATURE_CACHE_ENABLED and not ENABLE_CUSTOM_AUGMENTATION:
+        print(
+            f"FEATURE_CACHE_ENABLED: {FEATURE_CACHE_ENABLED}, ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} - extracting and saving backbonefeatures"
+            f"and creating feature-based dataloaders for train/test"
+        )
+        if not Path(CACHED_FEATURES_TRAIN_PATH).is_file():
+            engine.extract_backbone_features(
+                model_0.backbone,
+                simple_train_dataloader,
+                device,
+                CACHED_FEATURES_TRAIN_PATH,
+            )
+        if not Path(CACHED_FEATURES_TEST_PATH).is_file():
+            engine.extract_backbone_features(
+                model_0.backbone,
+                simple_test_dataloader,
+                device,
+                CACHED_FEATURES_TEST_PATH,
+            )
+
+        train_dataset = CatchedFeaturesDataset(CACHED_FEATURES_TRAIN_PATH)
+        test_dataset = CatchedFeaturesDataset(CACHED_FEATURES_TEST_PATH)
+
+        train_dataloader, test_dataloader = data_setup.create_feature_dataloaders(
+            train_dataset=train_dataset,
+            test_dataset=test_dataset,
+            batch_size=args.batch_size,
+            num_workers=NUM_WORKERS,
+            shuffle_train=False,
+        )
+    else:
+        print(
+            f"FEATURE_CACHE_ENABLED: {FEATURE_CACHE_ENABLED}, ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} - SKIPPING bakcbone caching"
+            f"and creating image-based dataloaders for train/test"
+        )
+        train_dataloader = simple_train_dataloader
+        test_dataloader = simple_test_dataloader
 
     # Create loss function, lr scheduler, and optimizer
     loss_fn = nn.CrossEntropyLoss()
@@ -118,11 +196,10 @@ def run_training():
         )
 
     try:
-        start_time = timer()
         results = engine.train_model(
             model=model_0,
-            train_dataloader=simple_train_dataloader,
-            test_dataloader=simple_test_dataloader,
+            train_dataloader=train_dataloader,
+            test_dataloader=test_dataloader,
             optimizer=optimizer,
             scheduler=scheduler,
             loss_fn=loss_fn,
@@ -131,6 +208,7 @@ def run_training():
             device=device,
             patience=args.early_stop_patience,
             writer=writer,
+            caching_enabled=FEATURE_CACHE_ENABLED,
         )
         end_time = timer()
         train_time = print_train_time(start_time, end_time, device)

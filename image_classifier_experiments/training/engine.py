@@ -14,6 +14,35 @@ def get_current_lr(optimizer):
     return optimizer.param_groups[0]["lr"]
 
 
+def extract_backbone_features(
+    backbone: nn.Module, dataloader: DataLoader, device: torch.device, output_dir: str
+):
+    backbone.eval()
+
+    all_features = []
+    all_labels = []
+
+    with torch.inference_mode():
+        for X, y in dataloader:
+            X = X.to(device)
+
+            features = backbone(X)
+
+            all_features.append(features.cpu())
+            all_labels.append(y)
+
+    features = torch.cat(all_features)
+    labels = torch.cat(all_labels)
+
+    torch.save(
+        {
+            "features": features,
+            "labels": labels,
+        },
+        output_dir,
+    )
+
+
 def train_step(
     model: nn.Module,
     dataloader: DataLoader,
@@ -26,14 +55,15 @@ def train_step(
     # 0. Put model into training mode
     model.train()
 
-    train_loss, train_acc = 0, 0
+    train_loss = torch.zeros((), device=device)
+    train_acc = torch.zeros((), device=device)
 
     # For each batch
     for batch, (X_batch, y_batch) in enumerate(dataloader):
         # Move data to device
         X_batch, y_batch = X_batch.to(device), y_batch.to(device)
 
-        # 1. Forward Pass (don't forget inference mode!)
+        # 1. Forward Pass
         y_logits = model(X_batch)
 
         # 2. calculate loss and accuracy
@@ -45,8 +75,8 @@ def train_step(
         # run into issues tying to do things like plot the result as matplotlib will complain that it can't use cuda/mps
         # tensors etc.  Doing this just makes processing results easier so you don't have to convert later every time
         # something doesn't want a torch tensor.
-        train_loss += loss.item()
-        train_acc += acc
+        train_loss += loss.detach()
+        train_acc += acc.detach()
 
         # 3. Zero gradient
         optimizer.zero_grad()
@@ -58,8 +88,8 @@ def train_step(
         optimizer.step()
 
     # Calculate results: the avg train loss and accuracy metric per batch
-    train_loss /= len(dataloader)
-    train_acc /= len(dataloader)
+    train_loss = (train_loss / len(dataloader)).item()
+    train_acc = (train_acc / len(dataloader)).item()
     return train_loss, train_acc
     # print(f"\nTrain Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f}")
 
@@ -74,7 +104,8 @@ def test_step(
 
     # Set model to eval mode
     model.eval()
-    test_loss, test_acc = 0, 0
+    test_loss = torch.zeros((), device=device)
+    test_acc = torch.zeros((), device=device)
 
     # For each batch
     for batch, (X_batch, y_batch) in enumerate(dataloader):
@@ -89,12 +120,12 @@ def test_step(
         loss = loss_fn(y_logits, y_batch)
         acc = accuracy_fn(y_true=y_batch, y_pred=y_logits.argmax(dim=1))
 
-        test_loss += loss.item()
-        test_acc += acc
+        test_loss += loss.detach()
+        test_acc += acc.detach()
 
     # Calculate results: the avg test loss and accuracy metric per batch
-    test_loss /= len(dataloader)
-    test_acc /= len(dataloader)
+    test_loss = (test_loss / len(dataloader)).item()
+    test_acc = (test_acc / len(dataloader)).item()
     return test_loss, test_acc
 
 
@@ -117,6 +148,7 @@ def train_model(
     scheduler: Any | None = None,
     device: torch.device | None = None,
     writer: SummaryWriter | None = None,
+    caching_enabled: bool = False,
 ):
     """Trains a model using CrossEntropyLoss and StochasticGradientDescent with given configuration"""
 
@@ -138,9 +170,20 @@ def train_model(
         "lr": [],
     }
 
+    # If backbone caching is enabled, then we're only training the classifier
+    # using cached features dataset, instead of training the whole model using
+    # the image dataset.  This drastically reduces train time, with the tradeoff
+    # being no random augmentation of data between epochs (feature data is already cached)
+    # We can enable or disable backbone caching depending on whether data variation between
+    # epochs is being used.
+    if caching_enabled:
+        train_model = model.classifier
+    else:
+        train_model = model
+
     for epoch in tqdm(range(epochs)):
         train_loss, train_acc = train_step(
-            model=model,
+            model=train_model,
             dataloader=train_dataloader,
             loss_fn=loss_fn,
             optimizer=optimizer,
@@ -148,7 +191,7 @@ def train_model(
             device=device,
         )
         test_loss, test_acc = test_step(
-            model=model,
+            model=train_model,
             dataloader=test_dataloader,
             loss_fn=loss_fn,
             accuracy_fn=accuracy_fn,

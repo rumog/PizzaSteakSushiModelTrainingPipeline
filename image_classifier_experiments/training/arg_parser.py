@@ -12,6 +12,8 @@ class TrainArgs:
     lr_schedule_patience: int | None = None
     weight_decay: float = 0.0
     save: Literal["file", "s3"] | None = None
+    s3_bucket: str | None = None
+    s3_key_prefix: str | None = None
 
 
 # Currently the file and s3 saving locations are hard coded
@@ -52,6 +54,16 @@ def parse_train_args() -> TrainArgs:
         choices=["file", "s3"],
     )
 
+    parser.add_argument(
+        "--s3_bucket",
+        type=str,
+    )
+
+    parser.add_argument(
+        "--s3_key_prefix",
+        type=str,
+    )
+
     args = parser.parse_args()
     # validate_args(args)
     return TrainArgs(
@@ -62,4 +74,6 @@ def parse_train_args() -> TrainArgs:
         lr_schedule_patience=args.lr_schedule_patience,
         weight_decay=args.weight_decay,
         save=args.save,
+        s3_bucket=args.s3_bucket,
+        s3_key_prefix=args.s3_key_prefix,
     )
