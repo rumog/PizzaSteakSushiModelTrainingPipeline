@@ -15,6 +15,8 @@ class RamImageDataset(Dataset):
     it is expected that a separate transform process (e.g. GPU autmentation pipeline) will produce the final image tensor shape expected by the model
     """
 
+    MAX_IMAGE_SIZE = 350
+
     def __init__(self, root_dir):
         self.root_dir = Path(root_dir)
 
@@ -50,6 +52,14 @@ class RamImageDataset(Dataset):
                 with Image.open(image_path) as image:
                     image = image.convert("RGB")
 
+                    image.thumbnail(
+                        (self.MAX_IMAGE_SIZE, self.MAX_IMAGE_SIZE),
+                        Image.Resampling.BILINEAR,
+                    )
+
+                    if len(self.images) == 0:
+                        print(f"DEBUG: first image after thumbnail = {image.size}")
+
                     # H x W x C -> C x H x W
                     tensor = (
                         torch.from_numpy(np.array(image)).permute(2, 0, 1).contiguous()
@@ -58,6 +68,11 @@ class RamImageDataset(Dataset):
                     self.samples.append((image_path, class_index))
         self.targets = [class_index for _, class_index in self.samples]
         print(f"Loaded {len(self.images)} into RAM from: {self.root_dir}")
+
+        total_bytes = sum(image.numel() * image.element_size() for image in self.images)
+
+        print(f"Loaded {len(self.images)} images into RAM from: {self.root_dir}")
+        print(f"Decoded image RAM: {total_bytes / (1024**3):.2f} GiB")
 
     def __getitem__(self, index):
         return self.images[index], self.samples[index][1]
