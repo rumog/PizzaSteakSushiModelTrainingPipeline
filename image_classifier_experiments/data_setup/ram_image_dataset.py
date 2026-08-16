@@ -15,7 +15,10 @@ class RamImageDataset(Dataset):
     it is expected that a separate transform process (e.g. GPU autmentation pipeline) will produce the final image tensor shape expected by the model
     """
 
-    MAX_IMAGE_SIZE = 350
+    # Adding a lever to resize the images so the representation in RAM is not as large. Going with 350 for now as the birds dataset
+    # we're working with has an avarage short side length of 500 already, so setting to 500 was essentially no savings in ram storage
+    # Without this resize the current birds dataset it ~25GB after decoded into memory
+    MAX_IMAGE_SIZE = 224
 
     def __init__(self, root_dir):
         self.root_dir = Path(root_dir)

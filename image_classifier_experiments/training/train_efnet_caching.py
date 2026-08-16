@@ -1,3 +1,4 @@
+import multiprocessing as mp
 import os
 from datetime import datetime
 from pathlib import Path
@@ -377,4 +378,5 @@ def run_training():
 
 
 if __name__ == "__main__":
+    mp.set_start_method("fork", force=True)
     run_training()
