@@ -52,6 +52,7 @@ def train_step(
     accuracy_fn,
     device: torch.device = None,
     gpu_transform: Callable = None,
+    ram_caching_enabled: bool = False,
 ):
 
     # 0. Put model into training mode
@@ -63,15 +64,25 @@ def train_step(
     # For each batch
     for batch, (X_batch, y_batch) in enumerate(dataloader):
         # Move data to device
-        X_batch, y_batch = (
-            X_batch.to(device, non_blocking=True),
-            y_batch.to(device, non_blocking=True),
-        )
+        y_batch = y_batch.to(device, non_blocking=True)
 
-        # GPU transform is enabled, perform transform now
-        if gpu_transform is not None:
+        if gpu_transform is not None and ram_caching_enabled:
+            X_batch = [
+                gpu_transform(image.to(device, non_blocking=True).float().div_(255.0))
+                for image in X_batch
+            ]
+            X_batch = torch.stack(X_batch)
+        elif gpu_transform is not None:
+            X_batch = X_batch.to(device, non_blocking=True)
             X_batch = X_batch.float().div_(255.0)
             X_batch = gpu_transform(X_batch)
+        else:
+            X_batch = X_batch.to(device, non_blocking=True)
+
+        # GPU transform is enabled, perform transform now
+        # if gpu_transform is not None:
+        #    X_batch = X_batch.float().div_(255.0)
+        #    X_batch = gpu_transform(X_batch)
 
         # 1. Forward Pass
         y_logits = model(X_batch)
@@ -110,6 +121,8 @@ def test_step(
     loss_fn: nn.Module,
     accuracy_fn,
     device: torch.device = None,
+    test_transform: Callable = None,
+    ram_caching_enabled: bool = False,
 ):
 
     # Set model to eval mode
@@ -120,10 +133,16 @@ def test_step(
     # For each batch
     for batch, (X_batch, y_batch) in enumerate(dataloader):
         # 0. Move data to device
-        X_batch, y_batch = (
-            X_batch.to(device, non_blocking=True),
-            y_batch.to(device, non_blocking=True),
-        )
+        y_batch = y_batch.to(device, non_blocking=True)
+
+        if test_transform is not None and ram_caching_enabled:
+            X_batch = [
+                test_transform(image.to(device, non_blocking=True).float().div_(255.0))
+                for image in X_batch
+            ]
+            X_batch = torch.stack(X_batch)
+        else:
+            X_batch = X_batch.to(device, non_blocking=True)
 
         # 1. Forward Pass
         with torch.inference_mode():
@@ -163,6 +182,8 @@ def train_model(
     writer: SummaryWriter | None = None,
     caching_enabled: bool = False,
     gpu_transform: Callable = None,
+    test_transform: Callable = None,
+    ram_caching_enabled: bool = False,
 ):
     """Trains a model using CrossEntropyLoss and StochasticGradientDescent with given configuration"""
 
@@ -204,6 +225,7 @@ def train_model(
             accuracy_fn=accuracy_fn,
             device=device,
             gpu_transform=gpu_transform,
+            ram_caching_enabled=ram_caching_enabled,
         )
         test_loss, test_acc = test_step(
             model=train_model,
@@ -211,6 +233,8 @@ def train_model(
             loss_fn=loss_fn,
             accuracy_fn=accuracy_fn,
             device=device,
+            test_transform=test_transform,
+            ram_caching_enabled=ram_caching_enabled,
         )
 
         # Guard against invalid metrics to prevent saving invalid checkpoints
@@ -310,22 +334,14 @@ def train_model(
             )
 
         # stop early if epochs without improvement breaches patience
-        if patience is not None:
+        if patience is not None and epochs_without_improvement >= patience:
             tqdm.write(
-                f"early stop patience set to {patience}, checking early stop conditions"
+                f"Early stopping triggered at epoch {epoch}. Best epoch: {best_epoch}"
             )
-            if epochs_without_improvement >= patience:
-                tqdm.write(
-                    f"patience value: {patience} was supplied, checking for early stoppage"
-                )
-                tqdm.write(
-                    f"Early stopping triggered at epoch {epoch}. Best epoch: {best_epoch}"
-                )
-                break
+            break
 
         # prepare next epoch
         if scheduler is not None:
-            tqdm.write("scheduler was provided, stepping scheduler")
             scheduler.step(test_loss)
 
     # Ensure training ran and we have a valid trained checkpoint

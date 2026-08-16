@@ -711,6 +711,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "boto3", extra = ["crt"] },
     { name = "matplotlib" },
+    { name = "numpy" },
     { name = "requests" },
     { name = "tensorboard" },
     { name = "torch" },
@@ -727,6 +728,7 @@ dev = [
 requires-dist = [
     { name = "boto3", extras = ["crt"], specifier = ">=1.43.62" },
     { name = "matplotlib", specifier = ">=3.11.1" },
+    { name = "numpy", specifier = ">=2.5.1" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "tensorboard", specifier = ">=2.21.0" },
     { name = "torch", specifier = ">=2.13.0" },

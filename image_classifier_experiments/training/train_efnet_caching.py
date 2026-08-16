@@ -38,7 +38,7 @@ RAW_TRANSFORM = transforms.Compose(
     ]
 )
 # training and model hyperparams
-NUM_WORKERS = 3
+NUM_WORKERS = 2
 DATA_PATH_PARENT_DIR = "data/"
 IMAGE_PATH_PARENT_DIR = "seattlement_birds_50_100_percent"
 MODEL_SAVE_DIR = "model"
@@ -48,7 +48,7 @@ ENABLE_CUSTOM_AUGMENTATION = True
 CACHED_FEATURES_TRAIN_PATH = "model/cached_features/train.pt"
 CACHED_FEATURES_TEST_PATH = "model/cached_features/test.pt"
 ENABLE_GPU_AUGMENTATION = True
-ENABLE_LOAD_IMAGES_TO_RAM = False
+ENABLE_LOAD_IMAGES_TO_RAM = True
 
 # Hard-coded GPU augmentation pipeline for testing performance
 # On setups like the G5.xl where GPU is much more powerful than mac M1
@@ -155,10 +155,14 @@ def run_training():
             f"- Using custom CPU augmentation pipeline: {train_transform}"
         )
     elif ENABLE_CUSTOM_AUGMENTATION and ENABLE_GPU_AUGMENTATION:
-        train_transform = RAW_TRANSFORM
+        if ENABLE_LOAD_IMAGES_TO_RAM:
+            train_transform = None
+        else:
+            train_transform = RAW_TRANSFORM
         print(
             f"ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} "
             f"ENABLE_GPU_AUGMENTATION: {ENABLE_GPU_AUGMENTATION} "
+            f"ENABLE_LOAD_IMAGES_TO_RAM: {ENABLE_LOAD_IMAGES_TO_RAM} "
             f"- Using RAW_TRANFORM: {train_transform}"
         )
     else:
@@ -171,17 +175,28 @@ def run_training():
             f"- Using default EfficientNetB0 Transform: {train_transform}"
         )
 
-    simple_train_dataloader, simple_test_dataloader, class_list = (
-        data_setup.create_image_folder_dataloaders(
-            train_dir,
-            test_dir,
-            train_transform,
-            test_transform,
-            batch_size=args.batch_size,
-            num_workers=NUM_WORKERS,
-            shuffle_train=True,
+    if not ENABLE_LOAD_IMAGES_TO_RAM:
+        simple_train_dataloader, simple_test_dataloader, class_list = (
+            data_setup.create_image_folder_dataloaders(
+                train_dir,
+                test_dir,
+                train_transform,
+                test_transform,
+                batch_size=args.batch_size,
+                num_workers=NUM_WORKERS,
+                shuffle_train=True,
+            )
         )
-    )
+    else:
+        simple_train_dataloader, simple_test_dataloader, class_list = (
+            data_setup.create_image_ram_dataloaders(
+                train_dir,
+                test_dir,
+                batch_size=args.batch_size,
+                num_workers=NUM_WORKERS,
+                shuffle_train=True,
+            )
+        )
 
     # Create model instance
     model_0 = EfficientNetB0Pss(num_classes=len(class_list)).to(device)
@@ -247,6 +262,7 @@ def run_training():
             mode="min",
             factor=0.1,
             patience=args.lr_schedule_patience,
+            min_lr=1e-6,
         )
 
     if (
@@ -279,6 +295,8 @@ def run_training():
             writer=writer,
             caching_enabled=FEATURE_CACHE_ENABLED,
             gpu_transform=gpu_transform,
+            test_transform=test_transform,
+            ram_caching_enabled=ENABLE_LOAD_IMAGES_TO_RAM,
         )
         end_time = timer()
         train_time = print_train_time(start_time, end_time, device)

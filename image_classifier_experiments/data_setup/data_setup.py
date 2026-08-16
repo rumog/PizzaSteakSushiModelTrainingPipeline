@@ -8,6 +8,11 @@ from collections.abc import Callable
 from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets
 
+from image_classifier_experiments.data_setup.ram_image_dataset import (
+    RamImageDataset,
+    ram_collate_fn,
+)
+
 
 def create_dataloaders(
     train_dir: str,
@@ -76,6 +81,44 @@ def create_image_folder_dataloaders(
         pin_memory=True,
         persistent_workers=True,
         prefetch_factor=2,
+    )
+    class_names = train_dataset.classes
+
+    return train_dataloader, test_dataloader, class_names
+
+
+def create_image_ram_dataloaders(
+    train_dir: str,
+    test_dir: str,
+    batch_size: int = 32,
+    num_workers: int = 0,
+    shuffle_train: bool = True,
+):
+    """
+    Create training and testing Dataloaders from the root directories provided.
+    Args:
+    [fill in later]
+    """
+    train_dataset = RamImageDataset(root_dir=train_dir)
+    test_dataset = RamImageDataset(root_dir=test_dir)
+
+    train_dataloader = DataLoader(
+        dataset=train_dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        shuffle=shuffle_train,
+        persistent_workers=True,
+        prefetch_factor=2,
+        collate_fn=ram_collate_fn,
+    )
+    test_dataloader = DataLoader(
+        dataset=test_dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        shuffle=False,
+        persistent_workers=True,
+        prefetch_factor=2,
+        collate_fn=ram_collate_fn,
     )
     class_names = train_dataset.classes
 
