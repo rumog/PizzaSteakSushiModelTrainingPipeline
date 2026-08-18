@@ -99,27 +99,17 @@ GPU_AUGMENTATION_PIPELINE = transforms_v2.Compose(
     ]
 )
 """
-# Conservative CPU-based augmentation pipeline for bird images.
-# Designed to introduce realistic variation while preserving as much
-# of the original image/detail as possible.
+# Conservative CPU-based augmentation pipeline.
+# Experiment A:
+# - Preserve the full image content as much as possible.
+# - Horizontal flip is the only stochastic augmentation.
+# - No random crop, rotation, affine transform, or color perturbation.
 CPU_AUTMENTATION_PIPELINE = transforms.Compose(
     [
-        transforms.Resize((256, 256)),
-        transforms.RandomCrop((224, 224)),
+        transforms.Resize(
+            (224, 224),
+        ),
         transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomRotation(
-            degrees=10,
-        ),
-        transforms.RandomAffine(
-            degrees=0,
-            translate=(0.05, 0.05),
-        ),
-        transforms.ColorJitter(
-            brightness=0.10,
-            contrast=0.10,
-            saturation=0.10,
-            hue=0.02,
-        ),
         transforms.ToTensor(),
         transforms.Normalize(
             mean=DEFAULT_WEIGHTS.transforms().mean,
@@ -133,26 +123,10 @@ CPU_AUTMENTATION_PIPELINE = transforms.Compose(
 GPU_AUGMENTATION_PIPELINE = transforms_v2.Compose(
     [
         transforms_v2.Resize(
-            size=(256, 256),
+            size=(224, 224),
             antialias=True,
         ),
-        transforms_v2.RandomCrop(
-            size=(224, 224),
-        ),
         transforms_v2.RandomHorizontalFlip(p=0.5),
-        transforms_v2.RandomRotation(
-            degrees=10,
-        ),
-        transforms_v2.RandomAffine(
-            degrees=0,
-            translate=(0.05, 0.05),
-        ),
-        transforms_v2.ColorJitter(
-            brightness=0.10,
-            contrast=0.10,
-            saturation=0.10,
-            hue=0.02,
-        ),
         transforms_v2.ToDtype(
             torch.float32,
             scale=True,
