@@ -75,7 +75,7 @@ def create_image_folder_dataloaders(
     if num_workers > 0:
         pin_memory_arg = True
         persistent_worker_arg = True
-        prefetch_factor_arg = 2
+        prefetch_factor_arg = 4
     else:
         pin_memory_arg = False
         persistent_worker_arg = False
