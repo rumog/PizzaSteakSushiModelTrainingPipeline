@@ -56,7 +56,16 @@ def train_step(
 ):
 
     # 0. Put model into training mode
-    model.train()
+    # If only the classifier was sent in (backbone caching)
+    # then it won't have backbone.  If it does, then it should be frozen
+    # This can really be cleaned up much better, right now it's
+    # dependent on things it doesn't need to be (e.g. both outside and inside)
+    # this function, attributes of the model are being initialized for training
+    if hasattr(model, "backbone"):
+        model.backbone.eval()
+        model.classifier.train()
+    else:
+        model.train()
 
     train_loss = torch.zeros((), device=device)
     train_acc = torch.zeros((), device=device)
