@@ -32,6 +32,11 @@ from image_classifier_experiments.utils.helper_functions import (
 # MODEL_KEY_PREFIX = "pss-classifier/0.1.0"
 
 DEFAULT_WEIGHTS = torchvision.models.EfficientNet_B0_Weights.DEFAULT
+
+# This is needed currently for the 'load images into ram first' scenario
+# because the the ram loaded images retain their original size as opposed
+# to being resized to matching tensors so they can be stacked by datasets like
+# torch ImageFolder
 RAW_TRANSFORM = transforms.Compose(
     [
         transforms.Resize((500, 500)),
@@ -39,21 +44,20 @@ RAW_TRANSFORM = transforms.Compose(
     ]
 )
 # training and model hyperparams
-NUM_WORKERS = 2
+# NUM_WORKERS = 6
 DATA_PATH_PARENT_DIR = "data/"
 IMAGE_PATH_PARENT_DIR = "seattlement_birds_50_100_percent"
 MODEL_SAVE_DIR = "model"
 IMAGE_SIZE = (224, 224)
-FEATURE_CACHE_ENABLED = False
-ENABLE_CUSTOM_AUGMENTATION = True
+# FEATURE_CACHE_ENABLED = False
+# ENABLE_CUSTOM_AUGMENTATION = True
 CACHED_FEATURES_TRAIN_PATH = "model/cached_features/train.pt"
 CACHED_FEATURES_TEST_PATH = "model/cached_features/test.pt"
-ENABLE_GPU_AUGMENTATION = True
-ENABLE_LOAD_IMAGES_TO_RAM = True
+# ENABLE_GPU_AUGMENTATION = True
+# ENABLE_LOAD_IMAGES_TO_RAM = True
 
-# Hard-coded GPU augmentation pipeline for testing performance
-# On setups like the G5.xl where GPU is much more powerful than mac M1
-# But CPU is less powerful and potential bottlneck
+# Custom cpu-based augmentation pipeline
+"""
 CPU_AUTMENTATION_PIPELINE = transforms.Compose(
     [
         transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
@@ -72,6 +76,8 @@ CPU_AUTMENTATION_PIPELINE = transforms.Compose(
     ]
 )
 
+# Custom augmentation pipeline. When wanting to run custom
+# augmentation on gpu instead of cpu, this pipeline will be used
 GPU_AUGMENTATION_PIPELINE = transforms_v2.Compose(
     [
         transforms_v2.RandomResizedCrop(
@@ -92,9 +98,75 @@ GPU_AUGMENTATION_PIPELINE = transforms_v2.Compose(
         ),
     ]
 )
+"""
+# Conservative CPU-based augmentation pipeline for bird images.
+# Designed to introduce realistic variation while preserving as much
+# of the original image/detail as possible.
+CPU_AUTMENTATION_PIPELINE = transforms.Compose(
+    [
+        transforms.Resize((256, 256)),
+        transforms.RandomCrop((224, 224)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomRotation(
+            degrees=10,
+        ),
+        transforms.RandomAffine(
+            degrees=0,
+            translate=(0.05, 0.05),
+        ),
+        transforms.ColorJitter(
+            brightness=0.10,
+            contrast=0.10,
+            saturation=0.10,
+            hue=0.02,
+        ),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=DEFAULT_WEIGHTS.transforms().mean,
+            std=DEFAULT_WEIGHTS.transforms().std,
+        ),
+    ]
+)
+
+# Conservative GPU-based augmentation pipeline.
+# Equivalent augmentation strategy to the CPU pipeline above.
+GPU_AUGMENTATION_PIPELINE = transforms_v2.Compose(
+    [
+        transforms_v2.Resize(
+            size=(256, 256),
+            antialias=True,
+        ),
+        transforms_v2.RandomCrop(
+            size=(224, 224),
+        ),
+        transforms_v2.RandomHorizontalFlip(p=0.5),
+        transforms_v2.RandomRotation(
+            degrees=10,
+        ),
+        transforms_v2.RandomAffine(
+            degrees=0,
+            translate=(0.05, 0.05),
+        ),
+        transforms_v2.ColorJitter(
+            brightness=0.10,
+            contrast=0.10,
+            saturation=0.10,
+            hue=0.02,
+        ),
+        transforms_v2.ToDtype(
+            torch.float32,
+            scale=True,
+        ),
+        transforms_v2.Normalize(
+            mean=DEFAULT_WEIGHTS.transforms().mean,
+            std=DEFAULT_WEIGHTS.transforms().std,
+        ),
+    ]
+)
 
 torch.manual_seed(42)
 torch.mps.manual_seed(42)
+torch.cuda.manual_seed(42)
 
 
 def redact_dict(d):
@@ -147,23 +219,23 @@ def run_training():
     default_weights = torchvision.models.EfficientNet_B0_Weights.DEFAULT
     test_transform = default_weights.transforms()
 
-    if ENABLE_CUSTOM_AUGMENTATION and not ENABLE_GPU_AUGMENTATION:
+    if args.enable_custom_augmentation and not args.enable_gpu_augmentation:
         ## Custom, currently hard coded autmentation pipeline for testing
         train_transform = CPU_AUTMENTATION_PIPELINE
         print(
-            f"ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} "
-            f"ENABLE_GPU_AUGMENTATION: {ENABLE_GPU_AUGMENTATION} "
+            f"ENABLE_CUSTOM_AUGMENTATION: {args.enable_custom_augmentation} "
+            f"ENABLE_GPU_AUGMENTATION: {args.enable_gpu_augmentation} "
             f"- Using custom CPU augmentation pipeline: {train_transform}"
         )
-    elif ENABLE_CUSTOM_AUGMENTATION and ENABLE_GPU_AUGMENTATION:
-        if ENABLE_LOAD_IMAGES_TO_RAM:
+    elif args.enable_custom_augmentation and args.enable_gpu_augmentation:
+        if args.enable_ram_loaded_images:
             train_transform = None
         else:
             train_transform = RAW_TRANSFORM
         print(
-            f"ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} "
-            f"ENABLE_GPU_AUGMENTATION: {ENABLE_GPU_AUGMENTATION} "
-            f"ENABLE_LOAD_IMAGES_TO_RAM: {ENABLE_LOAD_IMAGES_TO_RAM} "
+            f"ENABLE_CUSTOM_AUGMENTATION: {args.enable_custom_augmentation} "
+            f"ENABLE_GPU_AUGMENTATION: {args.enable_gpu_augmentation} "
+            f"ENABLE_LOAD_IMAGES_TO_RAM: {args.enable_ram_loaded_images} "
             f"- Using RAW_TRANFORM: {train_transform}"
         )
     else:
@@ -171,12 +243,12 @@ def run_training():
         # For training as well as testing
         train_transform = test_transform
         print(
-            f"ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} "
-            f"ENABLE_GPU_AUGMENTATION: {ENABLE_GPU_AUGMENTATION} "
+            f"ENABLE_CUSTOM_AUGMENTATION: {args.enable_custom_augmentation} "
+            f"ENABLE_GPU_AUGMENTATION: {args.enable_gpu_augmentation} "
             f"- Using default EfficientNetB0 Transform: {train_transform}"
         )
 
-    if not ENABLE_LOAD_IMAGES_TO_RAM:
+    if not args.enable_ram_loaded_images:
         simple_train_dataloader, simple_test_dataloader, class_list = (
             data_setup.create_image_folder_dataloaders(
                 train_dir,
@@ -184,7 +256,7 @@ def run_training():
                 train_transform,
                 test_transform,
                 batch_size=args.batch_size,
-                num_workers=NUM_WORKERS,
+                num_workers=args.num_workers,
                 shuffle_train=True,
             )
         )
@@ -194,7 +266,7 @@ def run_training():
                 train_dir,
                 test_dir,
                 batch_size=args.batch_size,
-                num_workers=NUM_WORKERS,
+                num_workers=args.num_workers,
                 shuffle_train=True,
             )
         )
@@ -206,9 +278,9 @@ def run_training():
     # Keep in mind that this will not be effective if randomized autmentation is enabled, so
     # Force disable using both here and default to not caching backbone
     start_time = timer()
-    if FEATURE_CACHE_ENABLED and not ENABLE_CUSTOM_AUGMENTATION:
+    if args.enable_backbone_caching and not args.enable_custom_augmentation:
         print(
-            f"FEATURE_CACHE_ENABLED: {FEATURE_CACHE_ENABLED}, ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} - extracting and saving backbonefeatures "
+            f"FEATURE_CACHE_ENABLED: {args.enable_backbone_caching}, ENABLE_CUSTOM_AUGMENTATION: {args.enable_custom_augmentation} - extracting and saving backbonefeatures "
             f"and creating feature-based dataloaders for train/test"
         )
         if not Path(CACHED_FEATURES_TRAIN_PATH).is_file():
@@ -233,12 +305,12 @@ def run_training():
             train_dataset=train_dataset,
             test_dataset=test_dataset,
             batch_size=args.batch_size,
-            num_workers=NUM_WORKERS,
+            num_workers=args.num_workers,
             shuffle_train=False,
         )
     else:
         print(
-            f"FEATURE_CACHE_ENABLED: {FEATURE_CACHE_ENABLED}, ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} - SKIPPING bakcbone caching "
+            f"FEATURE_CACHE_ENABLED: {args.enable_backbone_caching}, ENABLE_CUSTOM_AUGMENTATION: {args.enable_custom_augmentation} - SKIPPING bakcbone caching "
             f"and creating image-based dataloaders for train/test"
         )
         train_dataloader = simple_train_dataloader
@@ -267,14 +339,14 @@ def run_training():
         )
 
     if (
-        ENABLE_CUSTOM_AUGMENTATION
-        and ENABLE_GPU_AUGMENTATION
-        and not FEATURE_CACHE_ENABLED
+        args.enable_custom_augmentation
+        and args.enable_gpu_augmentation
+        and not args.enable_backbone_caching
     ):
         print(
-            f"ENABLE_CUSTOM_AUGMENTATION: {ENABLE_CUSTOM_AUGMENTATION} "
-            f"ENABLE_GPU_AUGMENTATION: {ENABLE_GPU_AUGMENTATION} "
-            f"FEATURE_CACHE_ENABLED: {FEATURE_CACHE_ENABLED} "
+            f"ENABLE_CUSTOM_AUGMENTATION: {args.enable_custom_augmentation} "
+            f"ENABLE_GPU_AUGMENTATION: {args.enable_gpu_augmentation} "
+            f"FEATURE_CACHE_ENABLED: {args.enable_backbone_caching} "
             f"- setting gpu_transform : {GPU_AUGMENTATION_PIPELINE}"
         )
         gpu_transform = GPU_AUGMENTATION_PIPELINE
@@ -294,10 +366,10 @@ def run_training():
             device=device,
             patience=args.early_stop_patience,
             writer=writer,
-            caching_enabled=FEATURE_CACHE_ENABLED,
+            caching_enabled=args.enable_backbone_caching,
             gpu_transform=gpu_transform,
             test_transform=test_transform,
-            ram_caching_enabled=ENABLE_LOAD_IMAGES_TO_RAM,
+            ram_caching_enabled=args.enable_ram_loaded_images,
         )
         end_time = timer()
         train_time = print_train_time(start_time, end_time, device)

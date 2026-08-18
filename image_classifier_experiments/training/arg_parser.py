@@ -5,6 +5,11 @@ from typing import Literal
 
 @dataclass
 class TrainArgs:
+    num_workers: int = 0
+    enable_custom_augmentation: bool = False
+    enable_gpu_augmentation: bool = False
+    enable_ram_loaded_images: bool = False
+    enable_backbone_caching: bool = False
     epochs: int = 5
     lr: float = 0.001
     batch_size: int = 32
@@ -20,6 +25,32 @@ class TrainArgs:
 # may update this in the future
 def parse_train_args() -> TrainArgs:
     parser = argparse.ArgumentParser(description="Training engine for image classifier")
+
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=0,
+    )
+
+    parser.add_argument(
+        "--enable_custom_augmentation",
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--enable_gpu_augmentation",
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--enable_ram_loaded_images",
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--enable_backbone_caching",
+        action="store_true",
+    )
 
     parser.add_argument(
         "--epochs",
@@ -67,6 +98,11 @@ def parse_train_args() -> TrainArgs:
     args = parser.parse_args()
     # validate_args(args)
     return TrainArgs(
+        num_workers=args.num_workers,
+        enable_custom_augmentation=args.enable_custom_augmentation,
+        enable_gpu_augmentation=args.enable_gpu_augmentation,
+        enable_ram_loaded_images=args.enable_ram_loaded_images,
+        enable_backbone_caching=args.enable_backbone_caching,
         epochs=args.epochs,
         lr=args.lr,
         batch_size=args.batch_size,
