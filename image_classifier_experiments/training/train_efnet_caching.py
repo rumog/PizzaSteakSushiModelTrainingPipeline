@@ -99,16 +99,11 @@ GPU_AUGMENTATION_PIPELINE = transforms_v2.Compose(
     ]
 )
 """
-# Conservative CPU-based augmentation pipeline.
-# Experiment A:
-# - Preserve the full image content as much as possible.
-# - Horizontal flip is the only stochastic augmentation.
-# - No random crop, rotation, affine transform, or color perturbation.
+# Custom cpu-based augmentation pipeline
 CPU_AUTMENTATION_PIPELINE = transforms.Compose(
     [
-        transforms.Resize(
-            (224, 224),
-        ),
+        transforms.Resize(256),
+        transforms.RandomCrop(224),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.ToTensor(),
         transforms.Normalize(
@@ -118,13 +113,16 @@ CPU_AUTMENTATION_PIPELINE = transforms.Compose(
     ]
 )
 
-# Conservative GPU-based augmentation pipeline.
-# Equivalent augmentation strategy to the CPU pipeline above.
+# Custom augmentation pipeline. When wanting to run custom
+# augmentation on gpu instead of cpu, this pipeline will be used
 GPU_AUGMENTATION_PIPELINE = transforms_v2.Compose(
     [
         transforms_v2.Resize(
-            size=(224, 224),
+            256,
             antialias=True,
+        ),
+        transforms_v2.RandomCrop(
+            224,
         ),
         transforms_v2.RandomHorizontalFlip(p=0.5),
         transforms_v2.ToDtype(
