@@ -258,30 +258,65 @@ def run_training():
     loss_fn = nn.CrossEntropyLoss()
 
     if model_0.unfrozen_backbone_blocks > 0 and args.backbone_ft_lr is not None:
-        param_groups = [
-            {
-                "params": [
-                    param
-                    for param in model_0.classifier.parameters()
-                    if param.requires_grad
-                ],
-                "lr": args.lr,
-                "weight_decay": args.weight_decay,
-            },
-            {
-                "params": [
-                    param
-                    for param in model_0.backbone.parameters()
-                    if param.requires_grad
-                ],
-                "lr": args.backbone_ft_lr,
-                "weight_decay": args.weight_decay,
-            },
-        ]
+        if model_0.unfrozen_backbone_blocks > 2:
+            param_groups = [
+                {
+                    "params": [
+                        param
+                        for param in model_0.classifier.parameters()
+                        if param.requires_grad
+                    ],
+                    "lr": args.lr,
+                    "weight_decay": args.weight_decay,
+                },
+                {
+                    "params": [
+                        param
+                        for param in model_0.backbone.features[-2:].parameters()
+                        if param.requires_grad
+                    ],
+                    "lr": args.backbone_ft_lr * 0.1,
+                    "weight_decay": args.weight_decay,
+                },
+                {
+                    "params": [
+                        param
+                        for param in model_0.backbone.features[
+                            -model_0.unfrozen_backbone_blocks : -2
+                        ].parameters()
+                        if param.requires_grad
+                    ],
+                    "lr": args.backbone_ft_lr,
+                    "weight_decay": args.weight_decay,
+                },
+            ]
+        else:
+            param_groups = [
+                {
+                    "params": [
+                        param
+                        for param in model_0.classifier.parameters()
+                        if param.requires_grad
+                    ],
+                    "lr": args.lr,
+                    "weight_decay": args.weight_decay,
+                },
+                {
+                    "params": [
+                        param
+                        for param in model_0.backbone.parameters()
+                        if param.requires_grad
+                    ],
+                    "lr": args.backbone_ft_lr,
+                    "weight_decay": args.weight_decay,
+                },
+            ]
     else:
         param_groups = [
             {
-                "params": model_0.parameters(),
+                "params": [
+                    param for param in model_0.parameters() if param.requires_grad
+                ],
                 "lr": args.lr,
                 "weight_decay": args.weight_decay,
             }
