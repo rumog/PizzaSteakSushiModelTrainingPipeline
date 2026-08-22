@@ -9,7 +9,12 @@ import torch
 import torchvision
 import torchvision.transforms.v2 as transforms_v2
 from torch import nn
-from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
+from torch.optim.lr_scheduler import (
+    CosineAnnealingLR,
+    LinearLR,
+    ReduceLROnPlateau,
+    SequentialLR,
+)
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 
@@ -342,11 +347,38 @@ def run_training():
     # If unfrozen backbone layers exist, use cosine annealing scheduler instead
     # This is mutually exculsive with arts.lr_schedule-patience, that vlue should NOT be
     # Set when not using a scheduler that uses it.
+
+    # Experimenting with warmup- note that this code won't be valid for epochs = 1
+    # will make this more explicit later.
     elif model_0.unfrozen_backbone_blocks > 0:
-        scheduler = CosineAnnealingLR(
+        warmup_epochs = min(5, max(1, args.epochs // 10))
+        cosine_epochs = args.epochs - warmup_epochs
+
+        # Warm up every parameter group from 10% of it's configured LR
+        warmup_scheduler = LinearLR(
+            optimizer=optimizer,
+            start_factor=0.1,
+            end_factor=1.0,
+            total_iters=warmup_epochs,
+        )
+        cosine_scheduler = CosineAnnealingLR(
             optimizer=optimizer,
             T_max=args.epochs,
             eta_min=1e-6,
+        )
+
+        scheduler = SequentialLR(
+            optimizer=optimizer,
+            schedulers=[
+                warmup_scheduler,
+                cosine_scheduler,
+            ],
+            milestones=[warmup_epochs],
+        )
+        print(
+            f"Using warmup + cosine scheduler: "
+            f"warmup_epochs={warmup_epochs}, "
+            f"cosine_epochs={cosine_epochs}"
         )
     print(f"Scheduler used: {scheduler}")
     print(f"scheduler params len: {len(optimizer.param_groups)}")
