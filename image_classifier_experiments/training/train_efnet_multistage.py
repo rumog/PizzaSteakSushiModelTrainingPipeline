@@ -95,7 +95,6 @@ def run_training():
         dropout_override=args.classifier_dropout,
     ).to(device)
 
-    start_time = timer()
     if args.enable_backbone_caching and not args.augmentation_config:
         # If feature caching enabled, cache backbone using the image dataloaders
         # and create feature-based dataloaders for use in train/test
@@ -128,6 +127,7 @@ def run_training():
     gpu_transform = get_gpu_transform(args)
 
     try:
+        start_time = timer()
         results = engine_ft.train_model(
             model=model_0,
             train_dataloader=train_dataloader,
@@ -212,26 +212,27 @@ def cache_backbone_and_create_feature_dataloaders(
     test_image_dataloader,
     device,
 ):
-    print(
-        f"enable_backbone_catching: {args.enable_backbone_caching}, augmentation_config: {args.augmentation_config} - extracting and saving backbonefeatures "
-        f"and creating feature-based dataloaders for train/test"
-    )
-
     # Run a single forward pass using train/test image dataloaders, and cache
     # features to train/test files
+    cache_bb_features_start = timer()
+    print("Caching backbone features for training image set")
     engine_ft.extract_backbone_features(
         backbone,
         train_image_dataloader,
         device,
         CACHED_FEATURES_TRAIN_PATH,
     )
+    print("Caching backbone features for test image set")
     engine_ft.extract_backbone_features(
         backbone,
         test_image_dataloader,
         device,
         CACHED_FEATURES_TEST_PATH,
     )
-
+    cache_bb_features_end = timer()
+    print(
+        f"Caching backbone features on train/test dataset took {cache_bb_features_end - cache_bb_features_start:.3f} seconds"
+    )
     # Use cached features to create train/test feature dataloaders
     train_dataloader, test_dataloader = data_setup.create_cached_feature_dataloaders(
         train_cached_features_path=CACHED_FEATURES_TRAIN_PATH,

@@ -6,30 +6,15 @@ from typing import Literal
 @dataclass
 class TrainArgs:
     num_workers: int = 0
-    # enable_custom_augmentation: bool = False
+    augmentation_config: str | None = None
     enable_gpu_augmentation: bool = False
     enable_ram_loaded_images: bool = False
     enable_backbone_caching: bool = False
     epochs: int = 5
     lr: float = 0.001
-    load_model_from_artifact: str | None = None
-    unfreeze_backbone_blocks: int = 0
-    backbone_ft_lr: float | None = None
-    batch_size: int = 32
-    early_stop_patience: int | None = None
-    lr_schedule_patience: int | None = None
-    weight_decay: float = 0.0
-    label_smoothing: float = 0.0
-    save: Literal["file", "s3"] | None = None
-    s3_bucket: str | None = None
-    s3_key_prefix: str | None = None
 
-    # Expermenting with switching to multi-value flags for multi-stage
-    # training routines
-    # unfrozen_backbone_blocks: list[int] | None = None
     # This argument expects a space delimited list of int:float pairs, e.g. 2:1e-3
     # or 2:0.001.
-
     # The fist number of the pair indicates how many blocks of the model
     # backbone to unfreeze.  The second number indicates the initial learning rate
     # set for those blocks in optimiziation.
@@ -40,8 +25,17 @@ class TrainArgs:
     # 3 will start with lr 1e-4
     unfreeze_bb_blocks_with_lr: list[tuple[int, float]] | None = None
     bb_block_wd: list[float] | None = None
+    load_model_from_artifact: str | None = None
+    batch_size: int = 32
+    early_stop_patience: int | None = None
+    lr_schedule_patience: int | None = None
+    weight_decay: float = 0.0
+    label_smoothing: float = 0.0
+    save: Literal["file", "s3"] | None = None
+    s3_bucket: str | None = None
+    s3_key_prefix: str | None = None
+
     enable_tensorboard: bool = False
-    augmentation_config: str | None = None
     classifier_dropout: float | None = None
 
 
@@ -56,12 +50,10 @@ def parse_train_args() -> TrainArgs:
         default=0,
     )
 
-    """
     parser.add_argument(
-        "--enable_custom_augmentation",
-        action="store_true",
+        "--augmentation_config",
+        type=str,
     )
-    """
 
     parser.add_argument(
         "--enable_gpu_augmentation",
@@ -91,20 +83,24 @@ def parse_train_args() -> TrainArgs:
     )
 
     parser.add_argument(
+        "--unfreeze_bb_blocks_with_lr",
+        type=int_float_pair,
+        nargs="*",
+        default=None,
+    )
+
+    parser.add_argument(
+        "--bb_block_wd",
+        type=float,
+        nargs="*",
+        default=None,
+    )
+
+    parser.add_argument(
         "--load_model_from_artifact",
         type=str,
     )
 
-    parser.add_argument(
-        "--unfreeze_backbone_blocks",
-        type=int,
-        default=0,
-    )
-
-    parser.add_argument(
-        "--backbone_ft_lr",
-        type=float,
-    )
     parser.add_argument(
         "--batch_size",
         type=int,
@@ -149,27 +145,8 @@ def parse_train_args() -> TrainArgs:
     )
 
     parser.add_argument(
-        "--unfreeze_bb_blocks_with_lr",
-        type=int_float_pair,
-        nargs="*",
-        default=None,
-    )
-
-    parser.add_argument(
-        "--bb_block_wd",
-        type=float,
-        nargs="*",
-        default=None,
-    )
-
-    parser.add_argument(
         "--enable_tensorboard",
         action="store_true",
-    )
-
-    parser.add_argument(
-        "--augmentation_config",
-        type=str,
     )
 
     parser.add_argument(
@@ -185,28 +162,25 @@ def parse_train_args() -> TrainArgs:
     validate_args(args)
     return TrainArgs(
         num_workers=args.num_workers,
-        # enable_custom_augmentation=args.enable_custom_augmentation,
+        augmentation_config=args.augmentation_config,
         enable_gpu_augmentation=args.enable_gpu_augmentation,
         enable_ram_loaded_images=args.enable_ram_loaded_images,
         enable_backbone_caching=args.enable_backbone_caching,
         epochs=args.epochs,
-        lr=args.lr,
-        load_model_from_artifact=args.load_model_from_artifact,
-        unfreeze_backbone_blocks=args.unfreeze_backbone_blocks,
-        backbone_ft_lr=args.backbone_ft_lr,
-        batch_size=args.batch_size,
         early_stop_patience=args.early_stop_patience,
-        lr_schedule_patience=args.lr_schedule_patience,
+        lr=args.lr,
+        classifier_dropout=args.classifier_dropout,
         weight_decay=args.weight_decay,
+        unfreeze_bb_blocks_with_lr=args.unfreeze_bb_blocks_with_lr,
+        bb_block_wd=args.bb_block_wd,
+        load_model_from_artifact=args.load_model_from_artifact,
+        batch_size=args.batch_size,
+        lr_schedule_patience=args.lr_schedule_patience,
         label_smoothing=args.label_smoothing,
         save=args.save,
         s3_bucket=args.s3_bucket,
         s3_key_prefix=args.s3_key_prefix,
-        unfreeze_bb_blocks_with_lr=args.unfreeze_bb_blocks_with_lr,
-        bb_block_wd=args.bb_block_wd,
         enable_tensorboard=args.enable_tensorboard,
-        augmentation_config=args.augmentation_config,
-        classifier_dropout=args.classifier_dropout,
     )
 
 
@@ -227,18 +201,20 @@ def validate_args(args):
     if args.enable_backbone_caching and (
         args.augmentation_config
         or args.enable_gpu_augmentation
-        or args.unfreeze_backbone_blocks
         or args.unfreeze_bb_blocks_with_lr
     ):
         raise ValueError(
             "Invalid Training Args: if enable_backbone_caching enabled, no augmentation or backbaone unfreezing args can be set"
         )
 
-    # By default right now, training happens with backbone frozen and classifier trainable, so the base "lr" parameter is used
-    # for the classifier.  If you choose to unfreeze backbone feature blocks, you must explicitly set a learning rate for backbone
-    if args.unfreeze_backbone_blocks and (not args.backbone_ft_lr):
-        raise ValueError(
-            "Invalid Training Args: unfreeze_backbone_blocks set, you must set backbone_ft_lr to set the backbone learning rate"
+    args.bb_block_wd = validate_and_normalize_bb_wd(
+        args.bb_block_wd, args.unfreeze_bb_blocks_with_lr
+    )
+
+    if args.unfreeze_bb_blocks_with_lr and args.lr_schedule_patience:
+        print(
+            "WARN: lr_schedule_patience will activate usage of ReduceLROnPlateau scheduler. "
+            "Currently expectding to use CosineAnnealing when unfreeze_bb_blocks_with_lr is set (when backbone has unfrozen layers)"
         )
 
     # Validate save for S3 path
@@ -246,10 +222,6 @@ def validate_args(args):
         raise ValueError(
             "Invalid Training Args: If 'save' is S3, both s3_bucket and s3_key_prefix Must be set"
         )
-
-    args.bb_block_wd = validate_and_normalize_bb_wd(
-        args.bb_block_wd, args.unfreeze_bb_blocks_with_lr
-    )
 
 
 def validate_and_normalize_bb_wd(

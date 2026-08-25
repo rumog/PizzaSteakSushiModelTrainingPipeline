@@ -6,6 +6,7 @@ Image Classification data.
 import os
 from collections.abc import Callable
 
+import torch
 from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets
 
@@ -76,7 +77,7 @@ def create_image_folder_dataloaders(
         num_workers = os.cpu_count() - 1
 
     if num_workers > 0:
-        pin_memory_arg = True
+        pin_memory_arg = torch.cuda.is_available()
         persistent_worker_arg = True
         prefetch_factor_arg = 4
     else:
@@ -130,7 +131,7 @@ def create_image_ram_dataloaders(
         num_workers = os.cpu_count() - 1
 
     if num_workers > 0:
-        pin_memory_arg = True
+        pin_memory_arg = torch.cuda.is_available()
         persistent_worker_arg = True
         prefetch_factor_arg = 2
     else:
@@ -163,6 +164,8 @@ def create_image_ram_dataloaders(
     return train_dataloader, test_dataloader, class_names
 
 
+# TODO: Remove this after testing the version below and cleaning up old
+# training code that uses it
 def create_feature_dataloaders(
     train_dataset: Dataset,
     test_dataset: Dataset,
@@ -184,7 +187,7 @@ def create_feature_dataloaders(
         num_workers = os.cpu_count() - 1
 
     if num_workers > 0:
-        pin_memory_arg = True
+        pin_memory_arg = torch.cuda.is_available()
         persistent_worker_arg = True
         prefetch_factor_arg = 2
     else:
@@ -238,7 +241,7 @@ def create_cached_feature_dataloaders(
         num_workers = os.cpu_count() - 1
 
     if num_workers > 0:
-        pin_memory_arg = True
+        pin_memory_arg = torch.cuda.is_available()
         persistent_worker_arg = True
         prefetch_factor_arg = 2
     else:

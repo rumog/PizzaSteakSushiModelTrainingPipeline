@@ -28,7 +28,11 @@ def get_backbone_lrs_string(optimizer):
     for i, group in enumerate(optimizer.param_groups):
         lr_strings.append(f"BB Stage {i} LR: {group['lr']:.7f} ")
         # print(f"Group {i} | LR: {group['lr']:.5f} | WD: {group['weight_decay']}")
-    return "| ".join(lr_strings)
+
+    if lr_strings:
+        return "| ".join(lr_strings)
+    else:
+        return "None"
 
 
 def extract_backbone_features(
@@ -40,7 +44,9 @@ def extract_backbone_features(
     all_labels = []
 
     with torch.inference_mode():
-        for X, y in dataloader:
+        for X, y in tqdm(
+            dataloader, desc="Extracting backbone features for dataloader..."
+        ):
             X = X.to(device)
 
             features = backbone(X)
@@ -241,7 +247,7 @@ def train_model(
     else:
         train_model = model
 
-    for epoch in tqdm(range(epochs)):
+    for epoch in tqdm(range(epochs), desc="Executing model training..."):
         train_loss, train_acc = train_step(
             model=train_model,
             dataloader=train_dataloader,

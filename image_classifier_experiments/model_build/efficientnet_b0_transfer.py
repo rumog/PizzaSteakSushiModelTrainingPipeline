@@ -87,7 +87,7 @@ class EfficientNetB0TransferLearningModel(nn.Module):
                 True
             )
         # debug test
-        print(self)
+        # print(self)
 
     @classmethod
     def inference_transform(cls):

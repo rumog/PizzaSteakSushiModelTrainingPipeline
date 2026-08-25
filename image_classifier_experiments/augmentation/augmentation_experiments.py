@@ -21,7 +21,7 @@ B0_AUGMENTATION_EXPERIMENTS = {
     # Initial reize 256 on short edge- retains aspect ratio
     # Random Crop and Horizontal Flip
     # --------
-    "experiment1": AugmentationConfig(
+    "experiment_1": AugmentationConfig(
         cpu=transforms.Compose(
             [
                 transforms.Resize(256),
@@ -59,7 +59,7 @@ B0_AUGMENTATION_EXPERIMENTS = {
     # experiment2:
     # Random Resize Crop and Horizontal Flip + Color Jitter
     # --------
-    "experiment2": AugmentationConfig(
+    "experiment_2": AugmentationConfig(
         cpu=transforms.Compose(
             [
                 transforms.RandomResizedCrop(
@@ -110,7 +110,7 @@ B0_AUGMENTATION_EXPERIMENTS = {
     # Initial reize 256x256
     # Random Crop and Horizontal Flip + mild Color Jitter + Ratation + Affine
     # --------
-    "experiment3": AugmentationConfig(
+    "experiment_3": AugmentationConfig(
         cpu=transforms.Compose(
             [
                 transforms.Resize((256, 256)),
@@ -174,7 +174,7 @@ B0_AUGMENTATION_EXPERIMENTS = {
     # experiment4:
     # Random Resize Crop 224x224 and Horizontal Flip
     # --------
-    "experiment4": AugmentationConfig(
+    "experiment_4": AugmentationConfig(
         cpu=transforms.Compose(
             [
                 transforms.RandomResizedCrop(
@@ -213,7 +213,7 @@ B0_AUGMENTATION_EXPERIMENTS = {
     # Initial reize 256 on short edge- retains aspect ratio
     # Random Crop 224x224 only
     # --------
-    "experiment5": AugmentationConfig(
+    "experiment_5": AugmentationConfig(
         cpu=transforms.Compose(
             [
                 transforms.Resize(256),
@@ -250,7 +250,7 @@ B0_AUGMENTATION_EXPERIMENTS = {
     # Initial reize 256 on short edge- retains aspect ratio
     # Center Crop 224x224 + Horizontal Flip only
     # --------
-    "experiment6": AugmentationConfig(
+    "experiment_6": AugmentationConfig(
         cpu=transforms.Compose(
             [
                 transforms.Resize(256),
