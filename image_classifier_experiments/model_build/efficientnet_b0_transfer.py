@@ -83,11 +83,12 @@ class EfficientNetB0TransferLearningModel(nn.Module):
                 f"{len(self.backbone.features)}"
             )
         elif self.unfrozen_backbone_blocks > 0:
+            print(
+                f"Unfreezing {self.unfrozen_backbone_blocks} trailing backbone feature layers"
+            )
             self.backbone.features[-self.unfrozen_backbone_blocks :].requires_grad_(
                 True
             )
-        # debug test
-        # print(self)
 
     @classmethod
     def inference_transform(cls):

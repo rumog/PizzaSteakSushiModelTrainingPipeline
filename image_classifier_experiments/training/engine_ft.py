@@ -360,12 +360,9 @@ def train_model(
         if epochs > 50:
             if epoch % 10 == 0:
                 tqdm.write(
-                    f"Epoch: {epoch} -- LR: {epoch_lr} | -- BB_LR: {epoch_backbone_lr} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} | Epochs w/o accuracy impr: {epochs_without_improvement}\n"
+                    f"Epoch: {epoch} -- Classifier LR: {epoch_lr} | -- {get_backbone_lrs_string(optimizer)} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} | Epochs w/o accuracy impr: {epochs_without_improvement}\n"
                 )
         else:
-            # tqdm.write(
-            #     f"Epoch: {epoch} -- LR: {epoch_lr} | -- BB_LR: {epoch_backbone_lr} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} Epochs w/o accuracy impr: {epochs_without_improvement}\n"
-            # )
             tqdm.write(
                 f"Epoch: {epoch} -- Classifier LR: {epoch_lr} | -- {get_backbone_lrs_string(optimizer)} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} Epochs w/o accuracy impr: {epochs_without_improvement}\n"
             )
