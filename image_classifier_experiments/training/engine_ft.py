@@ -26,11 +26,23 @@ def get_backbone_lr(optimizer):
 def get_backbone_lrs_string(optimizer):
     lr_strings = []
     for i, group in enumerate(optimizer.param_groups):
-        lr_strings.append(f"BB Stage {i} LR: {group['lr']:.7f} ")
+        lr_strings.append(f"BB Stage {i} LR: {group['lr']:.7f}")
         # print(f"Group {i} | LR: {group['lr']:.5f} | WD: {group['weight_decay']}")
 
     if lr_strings:
         return "| ".join(lr_strings)
+    else:
+        return "None"
+
+
+def get_backbone_lrs_string2(optimizer):
+    lr_strings = []
+    for i, group in enumerate(optimizer.param_groups):
+        lr_strings.append(f"{i}:{group['lr']:.7f} ")
+        # print(f"Group {i} | LR: {group['lr']:.5f} | WD: {group['weight_decay']}")
+
+    if lr_strings:
+        return ",".join(lr_strings)
     else:
         return "None"
 
@@ -360,11 +372,11 @@ def train_model(
         if epochs > 50:
             if epoch % 10 == 0:
                 tqdm.write(
-                    f"Epoch: {epoch} -- Classifier LR: {epoch_lr} | -- {get_backbone_lrs_string(optimizer)} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} | Epochs w/o accuracy impr: {epochs_without_improvement}\n"
+                    f"Epoch: {epoch} -- Classifier LR: {epoch_lr} | -- BB LR: [{get_backbone_lrs_string2(optimizer)}] | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} | Epochs w/o accuracy impr: {epochs_without_improvement}\n"
                 )
         else:
             tqdm.write(
-                f"Epoch: {epoch} -- Classifier LR: {epoch_lr} | -- {get_backbone_lrs_string(optimizer)} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} Epochs w/o accuracy impr: {epochs_without_improvement}\n"
+                f"Epoch: {epoch} -- Classifier LR: {epoch_lr} | -- BB LR: [{get_backbone_lrs_string2(optimizer)}] | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} Epochs w/o accuracy impr: {epochs_without_improvement}\n"
             )
 
         # stop early if epochs without improvement breaches patience
