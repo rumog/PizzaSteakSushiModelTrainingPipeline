@@ -1,8 +1,10 @@
 import multiprocessing as mp
-import os
+from collections.abc import Callable
 from datetime import datetime
+from itertools import accumulate
 from pathlib import Path
 from timeit import default_timer as timer
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import torch
@@ -18,16 +20,15 @@ from torch.optim.lr_scheduler import (
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 
-from image_classifier_experiments.data_setup import data_setup
-from image_classifier_experiments.data_setup.cached_features_dataset import (
-    CatchedFeaturesDataset,
+from image_classifier_experiments.augmentation.augmentation_experiments import (
+    B0_AUGMENTATION_EXPERIMENTS,
 )
-from image_classifier_experiments.model_build.efficient_net_b0 import EfficientNetB0Pss
+from image_classifier_experiments.data_setup import data_setup
 from image_classifier_experiments.model_build.efficientnet_b0_transfer import (
     EfficientNetB0TransferLearningModel,
 )
 from image_classifier_experiments.training import engine_ft
-from image_classifier_experiments.training.arg_parser import parse_train_args
+from image_classifier_experiments.training.arg_parser import TrainArgs, parse_train_args
 from image_classifier_experiments.utils.helper_functions import (
     accuracy_fn,
     plot_loss_curves,
@@ -52,59 +53,431 @@ RAW_TRANSFORM = transforms.Compose(
     ]
 )
 # training and model hyperparams
-# NUM_WORKERS = 6
 DATA_PATH_PARENT_DIR = "data/"
 IMAGE_PATH_PARENT_DIR = "seattlement_birds_50_100_percent"
 MODEL_SAVE_DIR = "model"
 IMAGE_SIZE = (224, 224)
-# FEATURE_CACHE_ENABLED = False
-# ENABLE_CUSTOM_AUGMENTATION = True
 CACHED_FEATURES_TRAIN_PATH = "model/cached_features/train.pt"
 CACHED_FEATURES_TEST_PATH = "model/cached_features/test.pt"
-# ENABLE_GPU_AUGMENTATION = True
-# ENABLE_LOAD_IMAGES_TO_RAM = True
 ENABLE_UNFROZEN_BACKBONE_TRAINING = True
-
-# Custom cpu-based augmentation pipeline
-CPU_AUTMENTATION_PIPELINE = transforms.Compose(
-    [
-        transforms.Resize(256),
-        transforms.RandomCrop(224),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=DEFAULT_WEIGHTS.transforms().mean,
-            std=DEFAULT_WEIGHTS.transforms().std,
-        ),
-    ]
-)
-
-# Custom augmentation pipeline. When wanting to run custom
-# augmentation on gpu instead of cpu, this pipeline will be used
-GPU_AUGMENTATION_PIPELINE = transforms_v2.Compose(
-    [
-        transforms_v2.Resize(
-            256,
-            antialias=True,
-        ),
-        transforms_v2.RandomCrop(
-            224,
-        ),
-        transforms_v2.RandomHorizontalFlip(p=0.5),
-        transforms_v2.ToDtype(
-            torch.float32,
-            scale=True,
-        ),
-        transforms_v2.Normalize(
-            mean=DEFAULT_WEIGHTS.transforms().mean,
-            std=DEFAULT_WEIGHTS.transforms().std,
-        ),
-    ]
-)
 
 torch.manual_seed(42)
 torch.mps.manual_seed(42)
 torch.cuda.manual_seed(42)
+
+
+def run_training():
+
+    # Handle commandline arg parsing
+    args = parse_train_args()
+    print(f"Args passed: {args}")
+
+    # Tensorboard integration
+    writer = get_tensorboard_writer(args) if args.enable_tensorboard else None
+
+    device = get_device()
+
+    # Create train and test transforms used in image dataloader creation
+    train_transform, test_transform = get_dataloader_transforms(args)
+
+    # Create image dataloaders
+    train_image_dataloader, test_image_dataloader, class_list = get_image_dataloaders(
+        args=args,
+        train_transform=train_transform,
+        test_transform=test_transform,
+    )
+
+    # Create the model
+    model_0 = EfficientNetB0TransferLearningModel(
+        num_classes=len(class_list),
+        from_artifact=args.load_model_from_artifact,
+        unfrozen_backbone_blocks=get_unfrozen_backbone_blocks(args),
+        dropout_override=args.classifier_dropout,
+    ).to(device)
+
+    start_time = timer()
+    if args.enable_backbone_caching and not args.augmentation_config:
+        # If feature caching enabled, cache backbone using the image dataloaders
+        # and create feature-based dataloaders for use in train/test
+        train_dataloader, test_dataloader = (
+            cache_backbone_and_create_feature_dataloaders(
+                model_0.backbone,
+                args,
+                train_image_dataloader,
+                test_image_dataloader,
+                device,
+            )
+        )
+    else:
+        # else, use the image dataloaders directly
+        train_dataloader = train_image_dataloader
+        test_dataloader = test_image_dataloader
+
+    # Create loss function, lr scheduler, and optimizer
+    loss_fn = get_loss_fn(args.label_smoothing)
+
+    optimizer = get_optimizer(model=model_0, args=args)
+
+    scheduler = create_scheduler_and_attach_to_optimizer(
+        optimizer=optimizer,
+        unfrozen_backbone_blocks=model_0.unfrozen_backbone_blocks,
+        training_args=args,
+    )
+
+    # Get GPU-based transform if required, otherwise will be None
+    gpu_transform = get_gpu_transform(args)
+
+    try:
+        results = engine_ft.train_model(
+            model=model_0,
+            train_dataloader=train_dataloader,
+            test_dataloader=test_dataloader,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            loss_fn=loss_fn,
+            accuracy_fn=accuracy_fn,
+            epochs=args.epochs,
+            device=device,
+            patience=args.early_stop_patience,
+            writer=writer,
+            caching_enabled=args.enable_backbone_caching,
+            gpu_transform=gpu_transform,
+            test_transform=test_transform,
+            ram_caching_enabled=args.enable_ram_loaded_images,
+        )
+        end_time = timer()
+        train_time = print_train_time(start_time, end_time, device)
+        if writer:
+            write_tensorboard_hyperparams(writer, results, args)
+    finally:
+        if writer:
+            writer.close()
+
+    print(f"train_model output: {redact_dict(results)}")
+
+    # Save training artifaacts if requested
+    save_training_artifacts(
+        model=model_0, results=results, class_list=class_list, args=args
+    )
+
+    # plot_loss_curves(results["history"])
+
+
+def get_image_dataloaders(
+    args: TrainArgs,
+    train_transform: Callable,
+    test_transform: Callable,
+):
+    data_path = Path(DATA_PATH_PARENT_DIR)
+    image_path = data_path / IMAGE_PATH_PARENT_DIR
+    train_dir = image_path / "train"
+    test_dir = image_path / "test"
+
+    # In the standard case where RAM loading of images is not enabled
+    # generate dataloaders using the ImageFolder based creator
+    if not args.enable_ram_loaded_images:
+        train_dataloader, test_dataloader, class_list = (
+            data_setup.create_image_folder_dataloaders(
+                train_dir,
+                test_dir,
+                train_transform,
+                test_transform,
+                batch_size=args.batch_size,
+                num_workers=args.num_workers,
+                shuffle_train=True,
+            )
+        )
+    # If RAM laoding of images is enabled, use custom RAM loading
+    # based dataloaders. RAM loading is used in conjunction with
+    # GPU-based augmentation, so no transform is suppoied here.
+    # Transform will be applied on the fly during training loop
+    else:
+        train_dataloader, test_dataloader, class_list = (
+            data_setup.create_image_ram_dataloaders(
+                train_dir,
+                test_dir,
+                batch_size=args.batch_size,
+                num_workers=args.num_workers,
+                shuffle_train=True,
+            )
+        )
+
+    return train_dataloader, test_dataloader, class_list
+
+
+def cache_backbone_and_create_feature_dataloaders(
+    backbone: nn.Module,
+    args: TrainArgs,
+    train_image_dataloader,
+    test_image_dataloader,
+    device,
+):
+    print(
+        f"enable_backbone_catching: {args.enable_backbone_caching}, augmentation_config: {args.augmentation_config} - extracting and saving backbonefeatures "
+        f"and creating feature-based dataloaders for train/test"
+    )
+
+    # Run a single forward pass using train/test image dataloaders, and cache
+    # features to train/test files
+    engine_ft.extract_backbone_features(
+        backbone,
+        train_image_dataloader,
+        device,
+        CACHED_FEATURES_TRAIN_PATH,
+    )
+    engine_ft.extract_backbone_features(
+        backbone,
+        test_image_dataloader,
+        device,
+        CACHED_FEATURES_TEST_PATH,
+    )
+
+    # Use cached features to create train/test feature dataloaders
+    train_dataloader, test_dataloader = data_setup.create_cached_feature_dataloaders(
+        train_cached_features_path=CACHED_FEATURES_TRAIN_PATH,
+        test_cached_features_path=CACHED_FEATURES_TEST_PATH,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        shuffle_train=False,
+    )
+    return train_dataloader, test_dataloader
+
+
+def extract_backbone_param_groups(
+    model: nn.Module,
+    backbone_lr_stages: list[tuple[int, float]],
+    backbone_wd_stages: list[float],
+):
+    param_groups = []
+    # converting to list and using this is slightly more performant
+    # than slicing and using the nn.sequential in-place.
+    backbone_blocks = list(model.backbone.features)
+
+    num_blocks_by_stage = [block for block, _ in backbone_lr_stages]
+    # This verification is not really the job of this function, move this out later
+    # to verify before calling this function
+    if sum(num_blocks_by_stage) > len(backbone_blocks):
+        raise ValueError(
+            f"Total number of unfrozen backbone blocks {sum(num_blocks_by_stage)} "
+            f"cannot be more than total existing backbone blocks in model: {len(backbone_blocks)}"
+        )
+
+    # create a list of indices that can be used to index into the desired
+    # backbone block stages.  For example if you are freezing the backbone in
+    # stages [2, 3, 3], the indices would be [2, 5, 8], and each stage of blocks could
+    # be accessed using split notation [-2:], [-5:-2], and [-8:-5]
+    frozen_block_stage_indices = list(accumulate(num_blocks_by_stage))
+
+    for i, (_, blocks_lr) in enumerate(backbone_lr_stages):
+        if i == 0:
+            selected_blocks = backbone_blocks[-frozen_block_stage_indices[i] :]
+        else:
+            selected_blocks = backbone_blocks[
+                -frozen_block_stage_indices[i] : -frozen_block_stage_indices[i - 1]
+            ]
+
+        params = []
+        for block in selected_blocks:
+            params.extend([p for p in block.parameters() if p.requires_grad])
+        if params:
+            param_groups.append(
+                {
+                    "params": params,
+                    "lr": blocks_lr,
+                    "weight_decay": backbone_wd_stages[i],
+                }
+            )
+
+    return param_groups
+
+
+# This logic is messy and hard codes assumptions for now
+# [TODO] update scheduler creation to be cleaner/more configurable
+def create_scheduler_and_attach_to_optimizer(
+    optimizer: torch.optim.Optimizer,
+    unfrozen_backbone_blocks: int,
+    training_args: TrainArgs,
+):
+    # min mode, as we will monitor and react to loss metric
+    scheduler = None
+    if training_args.epochs <= 1:
+        print(
+            f"Using scheduler: None. Maximum training epochs: {training_args.epochs}, is less than or equal to 1."
+        )
+        return None
+
+    # lr_schedule_patience presence indicates to use ReduceLROnPlateau for now.  However currently
+    # the choice is hard coded to use composite warmup + cosineAnnealing if any backbone blocks
+    # are unfrozen, even if lr_schedule_patience is set.
+    if (
+        training_args.lr_schedule_patience is not None
+        and not unfrozen_backbone_blocks > 0
+    ):
+        print(
+            f"schedule_patience set to {training_args.lr_schedule_patience}, creating lr scheduler"
+        )
+        scheduler = ReduceLROnPlateau(
+            optimizer=optimizer,
+            mode="min",
+            factor=0.1,
+            patience=training_args.lr_schedule_patience,
+            min_lr=1e-6,
+        )
+
+    # If unfrozen backbone layers exist, use cosine annealing scheduler instead
+    # This is mutually exculsive with arts.lr_schedule-patience, that vlue should NOT be
+    # Set when not using a scheduler that uses it.
+
+    # Experimenting with warmup- note that this code won't be valid for epochs = 1
+    # will make this more explicit later.
+    elif unfrozen_backbone_blocks > 0:
+        warmup_epochs = min(5, max(1, training_args.epochs // 10))
+        cosine_epochs = training_args.epochs - warmup_epochs
+
+        # Warm up every parameter group from 10% of it's configured LR
+        warmup_scheduler = LinearLR(
+            optimizer=optimizer,
+            start_factor=0.1,
+            end_factor=1.0,
+            total_iters=warmup_epochs,
+        )
+        cosine_scheduler = CosineAnnealingLR(
+            optimizer=optimizer,
+            T_max=cosine_epochs,
+            eta_min=1e-6,
+        )
+
+        scheduler = SequentialLR(
+            optimizer=optimizer,
+            schedulers=[
+                warmup_scheduler,
+                cosine_scheduler,
+            ],
+            milestones=[warmup_epochs],
+        )
+        print(
+            f"Using warmup + cosine scheduler: "
+            f"warmup_epochs={warmup_epochs}, "
+            f"cosine_epochs={cosine_epochs}"
+        )
+
+    if getattr(scheduler, "_schedulers", None):
+        print(
+            f"Using composite scheduler {scheduler.__class__.__name__}: with schedulers: {[s.__class__.__name__ for s in scheduler._schedulers]}"
+        )
+    elif scheduler is not None:
+        print(f"Using scheduler {scheduler.__class__.__name__}")
+    else:
+        print("Using scheduler: None")
+    return scheduler
+
+
+def get_unfrozen_backbone_blocks(args: TrainArgs):
+    if args.unfreeze_bb_blocks_with_lr:
+        return sum([block for block, _ in args.unfreeze_bb_blocks_with_lr])
+    else:
+        return 0
+
+
+def get_dataloader_transforms(args: TrainArgs):
+
+    # Get default EfficientNet_B0 pre_processing transform
+    default_weights = torchvision.models.EfficientNet_B0_Weights.DEFAULT
+    test_transform = default_weights.transforms()
+
+    # If custom augmentation is enabled, but gpu augmentation is not
+    # Use the custom cpu augmentation pipeline
+    if args.augmentation_config and not args.enable_gpu_augmentation:
+        # Get the specified augmentation pipeline configuration
+        try:
+            augmentation_pipeline = B0_AUGMENTATION_EXPERIMENTS[
+                args.augmentation_config
+            ].cpu
+        except KeyError as e:
+            raise ValueError(
+                f"Augmentation experiment: {args.augmentation_config} does not exist. {str(e)}"
+            )
+
+        train_transform = augmentation_pipeline
+        print(
+            f"augmentation_config: {args.augmentation_config} "
+            f"enable_gpu_augmentation: {args.enable_gpu_augmentation} "
+            f"- Using custom CPU augmentation pipeline: {train_transform}"
+        )
+    # Else if custom augmentation is enabled, and GPU-based augmentaiton is enabled
+    elif args.augmentation_config and args.enable_gpu_augmentation:
+        if args.enable_ram_loaded_images:
+            # When loading images from ram, any necessary transform will be done during that
+            # process, no train transform needed
+            train_transform = None
+        else:
+            # when not loading images from ram, we currently use a raw transform
+            # just to convert the image to tensor, and potentially resize
+            # so images are the same shape for tensor stacking purposes.
+            train_transform = RAW_TRANSFORM
+        print(
+            f"augmentation_config: {args.augmentation_config} "
+            f"enable_gpu_agumentation: {args.enable_gpu_augmentation} "
+            f"enable_ram_loaded_images: {args.enable_ram_loaded_images} "
+            f"- Using default RAW_TRANFORM: {train_transform}"
+        )
+    else:
+        # No custom augmentation is enabled, use standard EfficientNet B0 transform
+        # [TODO]: this is coupling to efficientnet B0- update this to be more flexible
+        train_transform = test_transform
+        print(
+            f"augmentation_config: {args.augmentation_config} "
+            f"enable_gpu_agumentation: {args.enable_gpu_augmentation} "
+            f"- Using default EfficientNetB0 Transform: {train_transform}"
+        )
+
+    return train_transform, test_transform
+
+
+def get_loss_fn(label_smoothing: float = 0.0):
+    loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+    print(
+        f"Using loss_fn {loss_fn.__class__.__name__} with label smoothing: {label_smoothing}"
+    )
+    return loss_fn
+
+
+def get_optimizer(model: nn.Module, args: TrainArgs):
+    # Create optimizer param groups with discriminated initial learning rates and weight
+    # decay. Start wtih the classifier which should always be present
+    param_groups = [
+        {
+            "params": [
+                param for param in model.classifier.parameters() if param.requires_grad
+            ],
+            "lr": args.lr,
+            "weight_decay": args.weight_decay,
+        }
+    ]
+
+    if args.unfreeze_bb_blocks_with_lr:
+        # A series of unfrozen backbone blocks with corresponding learning rates has been set,
+        # create the optimizer params accordingly.
+        # Note that total number of blocks to unfreeze has alredy been validated, so we don't need
+        # to verify that again before proceeding
+        param_groups.extend(
+            extract_backbone_param_groups(
+                model=model,
+                backbone_lr_stages=args.unfreeze_bb_blocks_with_lr,
+                backbone_wd_stages=args.bb_block_wd,
+            )
+        )
+    # Top level lr here is a fallback, but should be overriden by values in
+    # param groups
+    optimizer = torch.optim.AdamW(param_groups, lr=args.lr)
+    print(f"Using optimizer {optimizer.__class__.__name__} with param groups:")
+    for i, group in enumerate(optimizer.param_groups):
+        num_tensors = len(group["params"])
+        print(
+            f"Group {i} | LR: {group['lr']:.5f} | WD: {group['weight_decay']} | Tensors: {num_tensors}"
+        )
+
+    return optimizer
 
 
 def redact_dict(d):
@@ -127,323 +500,40 @@ def redact_dict(d):
     return new_dict
 
 
-def run_training():
-    data_path = Path(DATA_PATH_PARENT_DIR)
-    image_path = data_path / IMAGE_PATH_PARENT_DIR
-    train_dir = image_path / "train"
-    test_dir = image_path / "test"
-
-    args = parse_train_args()
-    print(f"Args passed: {args}")
-
-    # Tensorboard integration
-    timestamp = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y%m%d_%H%M%S")
-
-    run_name = f"efnet_b0_ep{args.epochs}_lr{args.lr}_esp{args.early_stop_patience}_lrp{args.lr_schedule_patience}_wd{args.weight_decay}_ts_{timestamp}"
-    writer = SummaryWriter(log_dir=f"runs/efficientnet_b0/{run_name}")
-
-    # Hard code device for compatibility with M1 mac for now
-    # change this if expanding.
-    if torch.cuda.is_available():
-        device = "cuda"
-    elif torch.mps.is_available():
-        device = "mps"
-    else:
-        device = "cpu"
-
-    # Handle commandline arg parsing
-
-    # Get default EfficientNet_B0 pre_processing transform
-    default_weights = torchvision.models.EfficientNet_B0_Weights.DEFAULT
-    test_transform = default_weights.transforms()
-
-    if args.enable_custom_augmentation and not args.enable_gpu_augmentation:
-        ## Custom, currently hard coded autmentation pipeline for testing
-        train_transform = CPU_AUTMENTATION_PIPELINE
-        print(
-            f"ENABLE_CUSTOM_AUGMENTATION: {args.enable_custom_augmentation} "
-            f"ENABLE_GPU_AUGMENTATION: {args.enable_gpu_augmentation} "
-            f"- Using custom CPU augmentation pipeline: {train_transform}"
-        )
-    elif args.enable_custom_augmentation and args.enable_gpu_augmentation:
-        if args.enable_ram_loaded_images:
-            train_transform = None
-        else:
-            train_transform = RAW_TRANSFORM
-        print(
-            f"ENABLE_CUSTOM_AUGMENTATION: {args.enable_custom_augmentation} "
-            f"ENABLE_GPU_AUGMENTATION: {args.enable_gpu_augmentation} "
-            f"ENABLE_LOAD_IMAGES_TO_RAM: {args.enable_ram_loaded_images} "
-            f"- Using RAW_TRANFORM: {train_transform}"
-        )
-    else:
-        # Use the default EfficientNet_B0 transform pre-processing
-        # For training as well as testing
-        train_transform = test_transform
-        print(
-            f"ENABLE_CUSTOM_AUGMENTATION: {args.enable_custom_augmentation} "
-            f"ENABLE_GPU_AUGMENTATION: {args.enable_gpu_augmentation} "
-            f"- Using default EfficientNetB0 Transform: {train_transform}"
-        )
-
-    if not args.enable_ram_loaded_images:
-        simple_train_dataloader, simple_test_dataloader, class_list = (
-            data_setup.create_image_folder_dataloaders(
-                train_dir,
-                test_dir,
-                train_transform,
-                test_transform,
-                batch_size=args.batch_size,
-                num_workers=args.num_workers,
-                shuffle_train=True,
-            )
-        )
-    else:
-        simple_train_dataloader, simple_test_dataloader, class_list = (
-            data_setup.create_image_ram_dataloaders(
-                train_dir,
-                test_dir,
-                batch_size=args.batch_size,
-                num_workers=args.num_workers,
-                shuffle_train=True,
-            )
-        )
-
-    # Create model instance
-    # model_0 = EfficientNetB0Pss(num_classes=len(class_list)).to(device)
-    model_0 = EfficientNetB0TransferLearningModel(
-        num_classes=len(class_list),
-        from_artifact=args.load_model_from_artifact,
-        unfrozen_backbone_blocks=args.unfreeze_backbone_blocks,
-    ).to(device)
-
-    # If feature caching enabled, we need to run a single forward pass and cache backbone features
-    # Keep in mind that this will not be effective if randomized autmentation is enabled, so
-    # Force disable using both here and default to not caching backbone
-    start_time = timer()
-    if args.enable_backbone_caching and not args.enable_custom_augmentation:
-        print(
-            f"FEATURE_CACHE_ENABLED: {args.enable_backbone_caching}, ENABLE_CUSTOM_AUGMENTATION: {args.enable_custom_augmentation} - extracting and saving backbonefeatures "
-            f"and creating feature-based dataloaders for train/test"
-        )
-        if not Path(CACHED_FEATURES_TRAIN_PATH).is_file():
-            engine_ft.extract_backbone_features(
-                model_0.backbone,
-                simple_train_dataloader,
-                device,
-                CACHED_FEATURES_TRAIN_PATH,
-            )
-        if not Path(CACHED_FEATURES_TEST_PATH).is_file():
-            engine_ft.extract_backbone_features(
-                model_0.backbone,
-                simple_test_dataloader,
-                device,
-                CACHED_FEATURES_TEST_PATH,
-            )
-
-        train_dataset = CatchedFeaturesDataset(CACHED_FEATURES_TRAIN_PATH)
-        test_dataset = CatchedFeaturesDataset(CACHED_FEATURES_TEST_PATH)
-
-        train_dataloader, test_dataloader = data_setup.create_feature_dataloaders(
-            train_dataset=train_dataset,
-            test_dataset=test_dataset,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            shuffle_train=False,
-        )
-    else:
-        print(
-            f"FEATURE_CACHE_ENABLED: {args.enable_backbone_caching}, ENABLE_CUSTOM_AUGMENTATION: {args.enable_custom_augmentation} - SKIPPING bakcbone caching "
-            f"and creating image-based dataloaders for train/test"
-        )
-        train_dataloader = simple_train_dataloader
-        test_dataloader = simple_test_dataloader
-
-    # Create loss function, lr scheduler, and optimizer
-    loss_fn = nn.CrossEntropyLoss()
-
-    if model_0.unfrozen_backbone_blocks > 0 and args.backbone_ft_lr is not None:
-        if model_0.unfrozen_backbone_blocks > 2:
-            param_groups = [
-                {
-                    "params": [
-                        param
-                        for param in model_0.classifier.parameters()
-                        if param.requires_grad
-                    ],
-                    "lr": args.lr,
-                    "weight_decay": args.weight_decay,
-                },
-                {
-                    "params": [
-                        param
-                        for param in model_0.backbone.features[-2:].parameters()
-                        if param.requires_grad
-                    ],
-                    "lr": args.backbone_ft_lr * 0.1,
-                    "weight_decay": args.weight_decay,
-                },
-                {
-                    "params": [
-                        param
-                        for param in model_0.backbone.features[
-                            -model_0.unfrozen_backbone_blocks : -2
-                        ].parameters()
-                        if param.requires_grad
-                    ],
-                    "lr": args.backbone_ft_lr,
-                    "weight_decay": args.weight_decay,
-                },
-            ]
-        else:
-            param_groups = [
-                {
-                    "params": [
-                        param
-                        for param in model_0.classifier.parameters()
-                        if param.requires_grad
-                    ],
-                    "lr": args.lr,
-                    "weight_decay": args.weight_decay,
-                },
-                {
-                    "params": [
-                        param
-                        for param in model_0.backbone.parameters()
-                        if param.requires_grad
-                    ],
-                    "lr": args.backbone_ft_lr,
-                    "weight_decay": args.weight_decay,
-                },
-            ]
-    else:
-        param_groups = [
-            {
-                "params": [
-                    param for param in model_0.parameters() if param.requires_grad
-                ],
-                "lr": args.lr,
-                "weight_decay": args.weight_decay,
-            }
-        ]
-
-    # Top level lr here is a fallback, but should be overriden by values in
-    # param groups
-    optimizer = torch.optim.AdamW(param_groups, lr=args.lr)
-    # min mode, as we will monitor and react to loss metric
-
-    scheduler = None
-    if args.lr_schedule_patience is not None:
-        print(
-            f"schedule_patience set to {args.lr_schedule_patience}, creating lr scheduler"
-        )
-        scheduler = ReduceLROnPlateau(
-            optimizer=optimizer,
-            mode="min",
-            factor=0.1,
-            patience=args.lr_schedule_patience,
-            min_lr=1e-6,
-        )
-    # If unfrozen backbone layers exist, use cosine annealing scheduler instead
-    # This is mutually exculsive with arts.lr_schedule-patience, that vlue should NOT be
-    # Set when not using a scheduler that uses it.
-
-    # Experimenting with warmup- note that this code won't be valid for epochs = 1
-    # will make this more explicit later.
-    elif model_0.unfrozen_backbone_blocks > 0:
-        warmup_epochs = min(5, max(1, args.epochs // 10))
-        cosine_epochs = args.epochs - warmup_epochs
-
-        # Warm up every parameter group from 10% of it's configured LR
-        warmup_scheduler = LinearLR(
-            optimizer=optimizer,
-            start_factor=0.1,
-            end_factor=1.0,
-            total_iters=warmup_epochs,
-        )
-        cosine_scheduler = CosineAnnealingLR(
-            optimizer=optimizer,
-            T_max=args.epochs,
-            eta_min=1e-6,
-        )
-
-        scheduler = SequentialLR(
-            optimizer=optimizer,
-            schedulers=[
-                warmup_scheduler,
-                cosine_scheduler,
-            ],
-            milestones=[warmup_epochs],
-        )
-        print(
-            f"Using warmup + cosine scheduler: "
-            f"warmup_epochs={warmup_epochs}, "
-            f"cosine_epochs={cosine_epochs}"
-        )
-    print(f"Scheduler used: {scheduler}")
-    print(f"scheduler params len: {len(optimizer.param_groups)}")
-
+def get_gpu_transform(args: TrainArgs):
+    # args should already be validated to not have invalid combinations
+    # but doing some protection here
     if (
-        args.enable_custom_augmentation
+        args.augmentation_config
         and args.enable_gpu_augmentation
         and not args.enable_backbone_caching
     ):
+        try:
+            augmentation_pipeline = B0_AUGMENTATION_EXPERIMENTS[
+                args.augmentation_config
+            ].gpu
+        except KeyError as e:
+            raise ValueError(
+                f"Augmentation experiment: {args.augmentation_config} does not exist. {str(e)}"
+            )
+
         print(
-            f"ENABLE_CUSTOM_AUGMENTATION: {args.enable_custom_augmentation} "
-            f"ENABLE_GPU_AUGMENTATION: {args.enable_gpu_augmentation} "
-            f"FEATURE_CACHE_ENABLED: {args.enable_backbone_caching} "
-            f"- setting gpu_transform : {GPU_AUGMENTATION_PIPELINE}"
+            f"augmentation_config: {args.augmentation_config} "
+            f"enable_gpu_augmentation: {args.enable_gpu_augmentation} "
+            f"enable_backbone_caching: {args.enable_backbone_caching} "
+            f"- setting gpu_transform : {augmentation_pipeline}"
         )
-        gpu_transform = GPU_AUGMENTATION_PIPELINE
+        return augmentation_pipeline
     else:
-        gpu_transform = None
+        return None
 
-    try:
-        results = engine_ft.train_model(
-            model=model_0,
-            train_dataloader=train_dataloader,
-            test_dataloader=test_dataloader,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            loss_fn=loss_fn,
-            accuracy_fn=accuracy_fn,
-            epochs=args.epochs,
-            device=device,
-            patience=args.early_stop_patience,
-            writer=writer,
-            caching_enabled=args.enable_backbone_caching,
-            gpu_transform=gpu_transform,
-            test_transform=test_transform,
-            ram_caching_enabled=args.enable_ram_loaded_images,
-        )
-        end_time = timer()
-        train_time = print_train_time(start_time, end_time, device)
-        # collect hyperparams,
-        writer.add_hparams(
-            {
-                "lr": args.lr,
-                "weight_decay": args.weight_decay,
-                "batch_size": args.batch_size,
-                "scheduled_epochs": args.epochs,
-                "early_stop_patience": args.early_stop_patience,
-                "lr_schedule_patience": args.lr_schedule_patience,
-            },
-            {
-                "best_accuracy": results["best_checkpoint"]["test_acc"],
-                "best_loss": results["best_checkpoint"]["test_loss"],
-                "epochs_completed": results["train_metadata"]["epochs_completed"],
-                "early_stopped": results["train_metadata"]["stopped_early"],
-            },
-        )
-    finally:
-        # collect hyperparams, close TensorBoard writer
-        writer.close()
 
-    print(f"train_model output: {redact_dict(results)}")
-
+def save_training_artifacts(
+    model: nn.Module, results: dict[str, Any], class_list: list[str], args: TrainArgs
+):
     # Save model if requested
     if args.save is not None:
-        model_architecture_name = model_0.__class__.__name__
+        model_architecture_name = model.__class__.__name__
 
         # MODEL_NAME = "intro_pytorch_computer_vision_model_2.pth"
         model_architecture = {"name": model_architecture_name, "weights": "DEFAULT"}
@@ -491,7 +581,41 @@ def run_training():
     else:
         print(f"args.save = {args.save}, skipping checkpoint artifact save")
 
-    # plot_loss_curves(results["history"])
+
+def get_device():
+    if torch.cuda.is_available():
+        return "cuda"
+    elif torch.mps.is_available():
+        return "mps"
+    else:
+        return "cpu"
+
+
+def get_tensorboard_writer(args: TrainArgs):
+    timestamp = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y%m%d_%H%M%S")
+    run_name = f"efnet_b0_ep{args.epochs}_lr{args.lr}_esp{args.early_stop_patience}_lrp{args.lr_schedule_patience}_wd{args.weight_decay}_ts_{timestamp}"
+    return SummaryWriter(log_dir=f"runs/efficientnet_b0/{run_name}")
+
+
+def write_tensorboard_hyperparams(
+    writer: SummaryWriter, results: dict[str, Any], args: TrainArgs
+):
+    writer.add_hparams(
+        {
+            "lr": args.lr,
+            "weight_decay": args.weight_decay,
+            "batch_size": args.batch_size,
+            "scheduled_epochs": args.epochs,
+            "early_stop_patience": args.early_stop_patience,
+            "lr_schedule_patience": args.lr_schedule_patience,
+        },
+        {
+            "best_accuracy": results["best_checkpoint"]["test_acc"],
+            "best_loss": results["best_checkpoint"]["test_loss"],
+            "epochs_completed": results["train_metadata"]["epochs_completed"],
+            "early_stopped": results["train_metadata"]["stopped_early"],
+        },
+    )
 
 
 if __name__ == "__main__":

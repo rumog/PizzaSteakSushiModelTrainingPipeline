@@ -32,3 +32,22 @@ def eval_model(
         "model_loss": loss.item(),
         "model_acc": acc,
     }
+
+
+def make_predictions(
+    model: nn.Module,
+    data_loader: torch.utils.data.DataLoader,
+    device: torch.device,
+):
+    model.eval()
+    y_preds = []
+    with torch.inference_mode():
+        for X, y in tqdm(data_loader, desc="Making predictions..."):
+            X, y = X.to(device), y.to(device)
+            y_logits = model(X)
+
+            y_preds.append(y_logits.argmax(dim=1).cpu())
+    # y_preds is a list of tensors (each tensor in the list corresponds to a batch, and
+    # has all of the predicted classes for each image in that batch)
+    # We need to collapse these to a single tensor
+    return torch.cat(y_preds)

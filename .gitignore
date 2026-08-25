@@ -10,6 +10,7 @@ wheels/
 data/
 runs/
 model/
+eval_logging/
 *.pth
 *.pt
 .DS_STORE

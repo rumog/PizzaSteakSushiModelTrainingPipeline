@@ -6,6 +6,7 @@ from torch import nn
 
 WEIGHTS = torchvision.models.EfficientNet_B0_Weights.DEFAULT
 ROOT_DIR = root_dir = Path("model")
+DEFAULT_CLASSIFIER_DROPOUT = 0.2
 
 
 class EfficientNetB0TransferLearningModel(nn.Module):
@@ -14,6 +15,7 @@ class EfficientNetB0TransferLearningModel(nn.Module):
         num_classes: int,
         from_artifact: str | None = None,
         unfrozen_backbone_blocks: int = 0,
+        dropout_override: float | None = None,
         # device defult to cpu for loading purposes, so you can load a model trained on
         # a different device.  After model creation you can move it to device associated
         # with current training platform
@@ -23,6 +25,11 @@ class EfficientNetB0TransferLearningModel(nn.Module):
         self.num_classes = num_classes
         self.from_artifact = from_artifact
         self.unfrozen_backbone_blocks = unfrozen_backbone_blocks
+        self.classifier_dropout = (
+            dropout_override
+            if dropout_override is not None
+            else DEFAULT_CLASSIFIER_DROPOUT
+        )
 
         # Create efficient_net_b0 model and initialize with DEFAULT weights
         weights = torchvision.models.EfficientNet_B0_Weights.DEFAULT
@@ -33,7 +40,7 @@ class EfficientNetB0TransferLearningModel(nn.Module):
         self.backbone.classifier = nn.Identity()
 
         self.classifier = nn.Sequential(
-            nn.Dropout(p=0.2, inplace=True),
+            nn.Dropout(p=self.classifier_dropout, inplace=True),
             nn.Linear(
                 in_features=1280,  # same as original
                 out_features=num_classes,
@@ -43,13 +50,22 @@ class EfficientNetB0TransferLearningModel(nn.Module):
 
         artifact = None
         if self.from_artifact is not None:
+            print(
+                f"Got from_artifact: {self.from_artifact}, attempting to load model artifact weights"
+            )
             artifact_file = ROOT_DIR / from_artifact
             if artifact_file.is_file():
                 artifact = torch.load(artifact_file, map_location=torch.device(device))
                 self.load_state_dict(artifact["state_dict"])
-            else:
                 print(
-                    f"from_artifact argument {self.from_artifact} not found, ignoring artifact loading and using default weights"
+                    f"Successfully loaded model weights from artifact: {artifact_file}"
+                )
+                print(
+                    f"Verify state_dict matches artifact: {self.matches_state_dict(artifact['state_dict'])}"
+                )
+            else:
+                raise ValueError(
+                    f"from_artifact value: {artifact_file} does not exist. Check that file exists and is entered correctly."
                 )
 
         # Set trainability params
@@ -70,13 +86,8 @@ class EfficientNetB0TransferLearningModel(nn.Module):
             self.backbone.features[-self.unfrozen_backbone_blocks :].requires_grad_(
                 True
             )
-
-        # print(f"----DEBUG-----: {self}")
-
-        if artifact is not None:
-            print(
-                f"State dicts equal: {self.are_state_dicts_equal(self.state_dict(), artifact['state_dict'])}"
-            )
+        # debug test
+        print(self)
 
     @classmethod
     def inference_transform(cls):
@@ -107,18 +118,19 @@ class EfficientNetB0TransferLearningModel(nn.Module):
 
         return self
 
-    def are_state_dicts_equal(self, dict1, dict2):
+    def matches_state_dict(self, match_dict):
+        source_dict = self.state_dict()
         # 1. Check if they have the same number of layers/parameters
-        if len(dict1) != len(dict2):
+        if len(source_dict) != len(match_dict):
             return False
 
         # 2. Check if all keys match exactly
-        if set(dict1.keys()) != set(dict2.keys()):
+        if set(source_dict.keys()) != set(match_dict.keys()):
             return False
 
         # 3. Check if all individual tensors are identical
-        for key, tensor1 in dict1.items():
-            tensor2 = dict2[key]
+        for key, tensor1 in source_dict.items():
+            tensor2 = match_dict[key]
             if not torch.equal(tensor1, tensor2):
                 return False
 

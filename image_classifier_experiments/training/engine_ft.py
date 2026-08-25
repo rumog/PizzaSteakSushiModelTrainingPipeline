@@ -23,6 +23,14 @@ def get_backbone_lr(optimizer):
         return None
 
 
+def get_backbone_lrs_string(optimizer):
+    lr_strings = []
+    for i, group in enumerate(optimizer.param_groups):
+        lr_strings.append(f"BB Stage {i} LR: {group['lr']:.7f} ")
+        # print(f"Group {i} | LR: {group['lr']:.5f} | WD: {group['weight_decay']}")
+    return "| ".join(lr_strings)
+
+
 def extract_backbone_features(
     backbone: nn.Module, dataloader: DataLoader, device: torch.device, output_dir: str
 ):
@@ -349,8 +357,11 @@ def train_model(
                     f"Epoch: {epoch} -- LR: {epoch_lr} | -- BB_LR: {epoch_backbone_lr} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} | Epochs w/o accuracy impr: {epochs_without_improvement}\n"
                 )
         else:
+            # tqdm.write(
+            #     f"Epoch: {epoch} -- LR: {epoch_lr} | -- BB_LR: {epoch_backbone_lr} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} Epochs w/o accuracy impr: {epochs_without_improvement}\n"
+            # )
             tqdm.write(
-                f"Epoch: {epoch} -- LR: {epoch_lr} | -- BB_LR: {epoch_backbone_lr} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} Epochs w/o accuracy impr: {epochs_without_improvement}\n"
+                f"Epoch: {epoch} -- Classifier LR: {epoch_lr} | -- {get_backbone_lrs_string(optimizer)} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} Epochs w/o accuracy impr: {epochs_without_improvement}\n"
             )
 
         # stop early if epochs without improvement breaches patience
@@ -361,6 +372,8 @@ def train_model(
             break
 
         # prepare next epoch
+        # [TODO]: more hard coding and training loop needing to know implementation details about
+        # scheduler- clean this up.
         if scheduler is not None:
             if isinstance(scheduler, ReduceLROnPlateau):
                 scheduler.step(test_loss)

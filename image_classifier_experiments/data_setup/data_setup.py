@@ -9,6 +9,9 @@ from collections.abc import Callable
 from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets
 
+from image_classifier_experiments.data_setup.cached_features_dataset import (
+    CatchedFeaturesDataset,
+)
 from image_classifier_experiments.data_setup.ram_image_dataset import (
     RamImageDataset,
     ram_collate_fn,
@@ -172,6 +175,60 @@ def create_feature_dataloaders(
     Args:
     [fill in later]
     """
+
+    if num_workers >= os.cpu_count():
+        print(
+            f"num_workers {num_workers} is at or above the os cpu count: {os.cpu_count()}. Ignoring provided"
+            f"count and setting num_workers to {os.cpu_count() - 1}"
+        )
+        num_workers = os.cpu_count() - 1
+
+    if num_workers > 0:
+        pin_memory_arg = True
+        persistent_worker_arg = True
+        prefetch_factor_arg = 2
+    else:
+        pin_memory_arg = False
+        persistent_worker_arg = False
+        prefetch_factor_arg = None
+
+    train_dataloader = DataLoader(
+        dataset=train_dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        shuffle=shuffle_train,
+        pin_memory=pin_memory_arg,
+        persistent_workers=persistent_worker_arg,
+        prefetch_factor=prefetch_factor_arg,
+    )
+    test_dataloader = DataLoader(
+        dataset=test_dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        shuffle=False,
+        pin_memory=pin_memory_arg,
+        persistent_workers=persistent_worker_arg,
+        prefetch_factor=prefetch_factor_arg,
+    )
+
+    return train_dataloader, test_dataloader
+
+
+def create_cached_feature_dataloaders(
+    train_cached_features_path: str,
+    test_cached_features_path: str,
+    batch_size: int = 32,
+    num_workers: int = 0,
+    shuffle_train: bool = True,
+):
+    """
+    Create training and testing Dataloaders from the root directories provided.
+    Args:
+    [fill in later]
+    """
+
+    train_dataset = CatchedFeaturesDataset(train_cached_features_path)
+    test_dataset = CatchedFeaturesDataset(test_cached_features_path)
 
     if num_workers >= os.cpu_count():
         print(
