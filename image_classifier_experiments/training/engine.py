@@ -38,7 +38,7 @@ def get_backbone_lrs_string(optimizer):
 def get_backbone_lrs_string2(optimizer):
     lr_strings = []
     for i, group in enumerate(optimizer.param_groups):
-        lr_strings.append(f"{i}:{group['lr']:.7f} ")
+        lr_strings.append(f"{i}:{group['lr']:.7f}")
         # print(f"Group {i} | LR: {group['lr']:.5f} | WD: {group['weight_decay']}")
 
     if lr_strings:

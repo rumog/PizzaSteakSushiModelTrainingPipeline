@@ -12,6 +12,7 @@ class TrainArgs:
     enable_backbone_caching: bool = False
     epochs: int = 5
     lr: float = 0.001
+    classifier_dropout: float | None = None
 
     # This argument expects a space delimited list of int:float pairs, e.g. 2:1e-3
     # or 2:0.001.
@@ -28,15 +29,23 @@ class TrainArgs:
     load_model_from_artifact: str | None = None
     batch_size: int = 32
     early_stop_patience: int | None = None
-    lr_schedule_patience: int | None = None
     weight_decay: float = 0.0
     label_smoothing: float = 0.0
     save: Literal["file", "s3"] | None = None
     s3_bucket: str | None = None
     s3_key_prefix: str | None = None
-
     enable_tensorboard: bool = False
-    classifier_dropout: float | None = None
+    # Experiment with adding more scheduler config
+    scheduler_type: Literal["ReduceLROnPlateau", "CosineAnnealingLR"] | None = None
+    # only compatible with ReduceLROnPlateau, ensure this is validated
+    reducelr_patience: int | None = None
+    reducelr_factor: float | None = None
+    # can apply to either main scheduler
+    min_scheduler_lr: float | None = None
+    # scheduler warmup
+    enable_lr_warmup: bool = False
+    warmup_epochs: int | None = None
+    warmup_factors: tuple[float, float] | None = None
 
 
 # Currently the file and s3 saving locations are hard coded
@@ -83,6 +92,11 @@ def parse_train_args() -> TrainArgs:
     )
 
     parser.add_argument(
+        "--classifier_dropout",
+        type=float,
+    )
+
+    parser.add_argument(
         "--unfreeze_bb_blocks_with_lr",
         type=int_float_pair,
         nargs="*",
@@ -109,11 +123,6 @@ def parse_train_args() -> TrainArgs:
 
     parser.add_argument(
         "--early_stop_patience",
-        type=int,
-    )
-
-    parser.add_argument(
-        "--lr_schedule_patience",
         type=int,
     )
 
@@ -150,8 +159,38 @@ def parse_train_args() -> TrainArgs:
     )
 
     parser.add_argument(
-        "--classifier_dropout",
+        "--scheduler_type",
+        choices=["ReduceLROnPlateau", "CosineAnnealingLR"],
+    )
+
+    parser.add_argument(
+        "--reducelr_patience",
+        type=int,
+    )
+
+    parser.add_argument(
+        "--reducelr_factor",
         type=float,
+    )
+
+    parser.add_argument(
+        "--min_scheduler_lr",
+        type=float,
+    )
+
+    parser.add_argument(
+        "--enable_lr_warmup",
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--warmup_epochs",
+        type=int,
+    )
+
+    parser.add_argument(
+        "--warmup_factors",
+        type=float_pair,
     )
 
     try:
@@ -175,12 +214,18 @@ def parse_train_args() -> TrainArgs:
         bb_block_wd=args.bb_block_wd,
         load_model_from_artifact=args.load_model_from_artifact,
         batch_size=args.batch_size,
-        lr_schedule_patience=args.lr_schedule_patience,
         label_smoothing=args.label_smoothing,
         save=args.save,
         s3_bucket=args.s3_bucket,
         s3_key_prefix=args.s3_key_prefix,
         enable_tensorboard=args.enable_tensorboard,
+        scheduler_type=args.scheduler_type,
+        reducelr_patience=args.reducelr_patience,
+        reducelr_factor=args.reducelr_factor,
+        min_scheduler_lr=args.min_scheduler_lr,
+        enable_lr_warmup=args.enable_lr_warmup,
+        warmup_epochs=args.warmup_epochs,
+        warmup_factors=args.warmup_factors,
     )
 
 
@@ -194,10 +239,19 @@ def int_float_pair(arg_value: str) -> tuple[int, float]:
         )
 
 
+def float_pair(arg_value: str) -> tuple[float, float]:
+    try:
+        parsed_float1, parsed_float2 = arg_value.split(":")
+        return float(parsed_float1), float(parsed_float2)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(
+            f"Invalid float:float entry pair: {arg_value}.  Must be of format 'float:float'. {str(e)}"
+        )
+
+
 def validate_args(args):
 
-    # If  backbone caching is enabled, you cannot cache or set backbone as trainable
-    # as it doesn't make sense
+    # If  backbone caching is enabled, you cannot run custom data augmentation or set backbone as trainable
     if args.enable_backbone_caching and (
         args.augmentation_config
         or args.enable_gpu_augmentation
@@ -207,15 +261,13 @@ def validate_args(args):
             "Invalid Training Args: if enable_backbone_caching enabled, no augmentation or backbaone unfreezing args can be set"
         )
 
+    # validate/normalize args related to staged backbone unfreeze and associated lr/wd per stage
     args.bb_block_wd = validate_and_normalize_bb_wd(
         args.bb_block_wd, args.unfreeze_bb_blocks_with_lr
     )
 
-    if args.unfreeze_bb_blocks_with_lr and args.lr_schedule_patience:
-        print(
-            "WARN: lr_schedule_patience will activate usage of ReduceLROnPlateau scheduler. "
-            "Currently expectding to use CosineAnnealing when unfreeze_bb_blocks_with_lr is set (when backbone has unfrozen layers)"
-        )
+    # Validate scheduler args
+    validate_scueduler_config(args)
 
     # Validate save for S3 path
     if args.save == "s3" and (not args.s3_bucket or not args.s3_key_prefix):
@@ -252,3 +304,69 @@ def validate_and_normalize_bb_wd(
         )
 
     return bb_block_wd
+
+
+def validate_scueduler_config(args):
+    if not args.scheduler_type and (
+        args.reducelr_patience is not None
+        or args.reducelr_factor is not None
+        or args.min_scheduler_lr is not None
+        or args.enable_lr_warmup
+        or args.warmup_epochs is not None
+        or args.warmup_factors is not None
+    ):
+        raise ValueError(
+            "No scheduler_type set: cannot specify lr scheduler-related arguments if no scheduler type set."
+        )
+
+    if args.scheduler_type and args.epochs <= 1:
+        raise ValueError(
+            "Cannot enable scheduler with scheduler_type when training for less than 2 epochs, as scheduler would not be engaged"
+        )
+
+    if args.scheduler_type == "ReduceLROnPlateau" and args.reducelr_patience is None:
+        raise ValueError(
+            "Scheduler type ReduceLROnPlateau requires setting patience with reducelr_patience"
+        )
+
+    if args.scheduler_type == "ReduceLROnPlateau" and args.enable_lr_warmup:
+        raise ValueError(
+            "Scheduler type ReduceLROnPlateau is not compatible with current warmup mechanism (composite scheduler with LinearLR)"
+        )
+
+    if args.scheduler_type == "CosineAnnealingLR" and (
+        args.reducelr_patience is not None or args.reducelr_factor is not None
+    ):
+        raise ValueError(
+            "Scheduler type CosineAnnealingLR not compatible with reducelr_patience or reducelr_factor and must not specify these arguments."
+        )
+
+    if args.reducelr_factor is not None and not (0.0 < args.reducelr_factor < 1.0):
+        raise ValueError("reducelr_factor must be greater than 0 and less than 1")
+
+    if not args.enable_lr_warmup and (
+        args.warmup_epochs is not None or args.warmup_factors is not None
+    ):
+        raise ValueError(
+            "enable_lr_warmup must be set to use warmup_epochs, or warmup_factors. Enable warmup, or reomve warmup related arguments."
+        )
+    if args.min_scheduler_lr is not None and args.min_scheduler_lr < 0:
+        raise ValueError("min_scheduler_lr must be >= 0.")
+
+    if args.warmup_epochs is not None and args.warmup_epochs < 1:
+        raise ValueError("warmup_epochs must be >= 1.")
+
+    if args.warmup_epochs is not None and args.warmup_epochs >= args.epochs:
+        raise ValueError(
+            f"warmup_epochs: {args.warmup_epochs} must be less than epochs: {args.epochs}"
+        )
+    if args.warmup_factors is not None:
+        start_factor, end_factor = args.warmup_factors
+        if start_factor <= 0 or end_factor <= 0:
+            raise ValueError(
+                f"warmup_factor values {start_factor}:{end_factor} must both be greater than 0"
+            )
+        if start_factor > end_factor:
+            raise ValueError(
+                f"warmup_factor start value: {start_factor} must be less than or equal to end value: {end_factor}"
+            )

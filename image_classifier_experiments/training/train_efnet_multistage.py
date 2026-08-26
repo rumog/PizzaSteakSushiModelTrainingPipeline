@@ -27,7 +27,7 @@ from image_classifier_experiments.data_setup import data_setup
 from image_classifier_experiments.model_build.efficientnet_b0_transfer import (
     EfficientNetB0TransferLearningModel,
 )
-from image_classifier_experiments.training import engine_ft
+from image_classifier_experiments.training import engine
 from image_classifier_experiments.training.arg_parser import TrainArgs, parse_train_args
 from image_classifier_experiments.utils.helper_functions import (
     accuracy_fn,
@@ -119,8 +119,7 @@ def run_training():
 
     scheduler = create_scheduler_and_attach_to_optimizer(
         optimizer=optimizer,
-        unfrozen_backbone_blocks=model_0.unfrozen_backbone_blocks,
-        training_args=args,
+        args=args,
     )
 
     # Get GPU-based transform if required, otherwise will be None
@@ -128,7 +127,7 @@ def run_training():
 
     try:
         start_time = timer()
-        results = engine_ft.train_model(
+        results = engine.train_model(
             model=model_0,
             train_dataloader=train_dataloader,
             test_dataloader=test_dataloader,
@@ -216,14 +215,14 @@ def cache_backbone_and_create_feature_dataloaders(
     # features to train/test files
     cache_bb_features_start = timer()
     print("Caching backbone features for training image set")
-    engine_ft.extract_backbone_features(
+    engine.extract_backbone_features(
         backbone,
         train_image_dataloader,
         device,
         CACHED_FEATURES_TRAIN_PATH,
     )
     print("Caching backbone features for test image set")
-    engine_ft.extract_backbone_features(
+    engine.extract_backbone_features(
         backbone,
         test_image_dataloader,
         device,
@@ -294,12 +293,13 @@ def extract_backbone_param_groups(
 
 # This logic is messy and hard codes assumptions for now
 # [TODO] update scheduler creation to be cleaner/more configurable
+"""
 def create_scheduler_and_attach_to_optimizer(
     optimizer: torch.optim.Optimizer,
     unfrozen_backbone_blocks: int,
     training_args: TrainArgs,
 ):
-    # min mode, as we will monitor and react to loss metric
+
     scheduler = None
     if training_args.epochs <= 1:
         print(
@@ -317,6 +317,7 @@ def create_scheduler_and_attach_to_optimizer(
         print(
             f"schedule_patience set to {training_args.lr_schedule_patience}, creating lr scheduler"
         )
+        # min mode, as we will monitor and react to loss metric for now- can make this configurable later
         scheduler = ReduceLROnPlateau(
             optimizer=optimizer,
             mode="min",
@@ -371,6 +372,98 @@ def create_scheduler_and_attach_to_optimizer(
     else:
         print("Using scheduler: None")
     return scheduler
+    """
+
+
+def create_scheduler_and_attach_to_optimizer(
+    optimizer: torch.optim.Optimizer,
+    args: TrainArgs,
+):
+    warmup_epochs = None
+    warmup_scheduler = None
+    scheduler = None
+    if args.epochs <= 1:
+        # This is also enforced in training args parsing, but protecting here as well
+        print(
+            f"Using scheduler: None. Maximum training epochs: {args.epochs}, is less than or equal to 1."
+        )
+        return None
+
+    min_lr = args.min_scheduler_lr if args.min_scheduler_lr is not None else 0
+
+    if args.enable_lr_warmup:
+        # Set warmup defaults
+        warmup_epochs = min(5, max(1, args.epochs // 10))
+        warmup_start_factor = 0.1
+        warmup_end_factor = 1.0
+
+        # Set warmup overrides from training args
+        if args.warmup_epochs:
+            warmup_epochs = args.warmup_epochs
+        if args.warmup_factors is not None:
+            warmup_start_factor = args.warmup_factors[0]
+            warmup_end_factor = args.warmup_factors[1]
+
+        warmup_scheduler = LinearLR(
+            optimizer=optimizer,
+            start_factor=warmup_start_factor,
+            end_factor=warmup_end_factor,
+            total_iters=warmup_epochs,
+        )
+
+    if args.scheduler_type == "ReduceLROnPlateau":
+        # reducelr_patience is validated during arg parse, must be present with valid value
+        reducelr_patience = args.reducelr_patience
+
+        if args.reducelr_factor is not None:
+            reducelr_factor = args.reducelr_factor
+        else:
+            reducelr_factor = 0.1
+            print(
+                f"ReduceLROnPlateau scheduler specified, but no reducelr_factor set, using default: {reducelr_factor}"
+            )
+
+        # min mode, as we will monitor and react to loss metric
+        scheduler = ReduceLROnPlateau(
+            optimizer=optimizer,
+            mode="min",
+            factor=reducelr_factor,
+            patience=reducelr_patience,
+            min_lr=min_lr,
+        )
+    elif args.scheduler_type == "CosineAnnealingLR":
+        cosine_epochs = args.epochs - warmup_epochs if warmup_scheduler else args.epochs
+        scheduler = CosineAnnealingLR(
+            optimizer=optimizer,
+            T_max=cosine_epochs,
+            eta_min=min_lr,
+        )
+
+    # NOTE The current warmup design uses a SequentialLR to create a composite with the
+    # warmup scheduler (LinearLR) and the chosen scheduler type. SequentialLR cannot currently
+    # compose LinearLR with metric-driven schedulers such as ReduceLROnPlateau.
+    # Whle the current command line argument parsing code explicitly prevents such a combination
+    # note that this code currently does NOT explicitly prevent any such combination. This may
+    # be added in the future if more schedulers become supported, but for now just be aware of this
+    if warmup_scheduler:
+        composite_scheduler = SequentialLR(
+            optimizer=optimizer,
+            schedulers=[
+                warmup_scheduler,
+                scheduler,
+            ],
+            milestones=[warmup_epochs],
+        )
+        print(
+            f"Using composite scheduler {composite_scheduler.__class__.__name__}: with schedulers: {[s.__class__.__name__ for s in composite_scheduler._schedulers]}"
+        )
+        return composite_scheduler
+    else:
+        if scheduler:
+            print(f"Using scheduler {scheduler.__class__.__name__}")
+        else:
+            print("No scheduler specified, using scheduler: None")
+        return scheduler
 
 
 def get_unfrozen_backbone_blocks(args: TrainArgs):
