@@ -264,7 +264,7 @@ def train_model(
         "train_acc": [],
         "test_loss": [],
         "test_acc": [],
-        "lr": [],
+        "classifier_lr": [],
         "backbone_stage_lr": [[] for _ in range(len(optimizer.param_groups) - 1)],
     }
 
