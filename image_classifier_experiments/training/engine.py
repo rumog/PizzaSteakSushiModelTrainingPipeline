@@ -38,7 +38,7 @@ def get_backbone_lr(optimizer):
 def get_backbone_lrs(optimizer: torch.optim.Optimizer):
     backbone_stage_lrs = []
     if not len(optimizer.param_groups) > 1:
-        backbone_stage_lrs
+        return backbone_stage_lrs
 
     for group in optimizer.param_groups[1:]:
         backbone_stage_lrs.append(group["lr"])
@@ -265,7 +265,7 @@ def train_model(
         "test_loss": [],
         "test_acc": [],
         "lr": [],
-        "backbone_stage_lr": [[] for _ in optimizer.param_groups() - 1],
+        "backbone_stage_lr": [[] for _ in optimizer.param_groups - 1],
     }
 
     # If backbone caching is enabled, then we're only training the classifier
