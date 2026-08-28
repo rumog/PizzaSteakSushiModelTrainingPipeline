@@ -45,7 +45,7 @@ def get_backbone_lrs_string(optimizer: torch.optim.Optimizer):
         return "None"
 
     for i, group in enumerate(optimizer.param_groups[1:], start=1):
-        lr_strings.append(f"{i}:{group['lr']:.7f}")
+        lr_strings.append(f"{i}:{group['lr']:.7g}")
 
     if lr_strings:
         return ",".join(lr_strings)
@@ -63,7 +63,7 @@ def get_backbone_wds_string(optimizer: torch.optim.Optimizer):
         return "None"
 
     for i, group in enumerate(optimizer.param_groups[1:], start=1):
-        lr_strings.append(f"{i}:{group['weight_decay']:.7f}")
+        lr_strings.append(f"{i}:{group['weight_decay']:.7g}")
 
     if lr_strings:
         return ",".join(lr_strings)
