@@ -14,9 +14,11 @@ import wandb
 
 
 def get_optimizer_group_metrics(optimizer: torch.optim.Optimizer):
-
     metrics = {}
-    for i, group in enumerate(optimizer.param_groups):
+    if not len(optimizer.param_groups) > 1:
+        return metrics
+
+    for i, group in enumerate(optimizer.param_groups[1:], start=1):
         metrics[f"optimizer/group {i}/lr"] = group["lr"]
         metrics[f"optimizer/group {i}/wd"] = group["weight_decay"]
     return metrics
