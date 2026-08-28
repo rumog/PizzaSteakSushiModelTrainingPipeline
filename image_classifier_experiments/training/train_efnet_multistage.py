@@ -20,6 +20,7 @@ from torch.optim.lr_scheduler import (
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 
+import wandb
 from image_classifier_experiments.augmentation.augmentation_experiments import (
     B0_AUGMENTATION_EXPERIMENTS,
 )
@@ -42,9 +43,17 @@ from image_classifier_experiments.utils.helper_functions import (
 
 DEFAULT_WEIGHTS = torchvision.models.EfficientNet_B0_Weights.DEFAULT
 
-# This is needed currently for the 'load images into ram first' scenario
-# because the the ram loaded images retain their original size as opposed
-# to being resized to matching tensors so they can be stacked by datasets like
+# This is needed currently for the GPU-based augmentation scenario
+# when loading images to ram is disabled. Currently in this scneario
+# Augmentation is applied directly during the training loop and not
+# injected into the dataloader. In this case this minimal cpu-based
+# transform is injected into the dataloader to resize the images
+# to the same time so they can be stacked/opearated on at batch level
+# and converted to tensor.
+#
+# The ram-loaded image case applies augmentation at the image-level
+# so the image tensors don't have to have the same shape.
+#
 # torch ImageFolder
 RAW_TRANSFORM = transforms.Compose(
     [
@@ -70,11 +79,11 @@ def run_training():
 
     # Handle commandline arg parsing
     args = parse_train_args()
+
+    if args.enable_wandb:
+        init_wandb(args)
+
     print(f"Args passed: {args}")
-
-    # Tensorboard integration
-    writer = get_tensorboard_writer(args) if args.enable_tensorboard else None
-
     device = get_device()
 
     # Create train and test transforms used in image dataloader creation
@@ -138,7 +147,6 @@ def run_training():
             epochs=args.epochs,
             device=device,
             patience=args.early_stop_patience,
-            writer=writer,
             caching_enabled=args.enable_backbone_caching,
             gpu_transform=gpu_transform,
             test_transform=test_transform,
@@ -146,11 +154,10 @@ def run_training():
         )
         end_time = timer()
         train_time = print_train_time(start_time, end_time, device)
-        if writer:
-            write_tensorboard_hyperparams(writer, results, args)
+        write_wandb_summary(train_time, results, args)
     finally:
-        if writer:
-            writer.close()
+        if wandb.run is not None:
+            wandb.finish()
 
     print(f"train_model output: {redact_dict(results)}")
 
@@ -211,27 +218,34 @@ def cache_backbone_and_create_feature_dataloaders(
     test_image_dataloader,
     device,
 ):
-    # Run a single forward pass using train/test image dataloaders, and cache
-    # features to train/test files
-    cache_bb_features_start = timer()
-    print("Caching backbone features for training image set")
-    engine.extract_backbone_features(
-        backbone,
-        train_image_dataloader,
-        device,
-        CACHED_FEATURES_TRAIN_PATH,
-    )
-    print("Caching backbone features for test image set")
-    engine.extract_backbone_features(
-        backbone,
-        test_image_dataloader,
-        device,
-        CACHED_FEATURES_TEST_PATH,
-    )
-    cache_bb_features_end = timer()
-    print(
-        f"Caching backbone features on train/test dataset took {cache_bb_features_end - cache_bb_features_start:.3f} seconds"
-    )
+    if not (
+        # Unless the user explicitly chose to bypass cache generation
+        # and both cached feature files are present, re-generate the cache.
+        args.bypass_cache_generation
+        and Path(CACHED_FEATURES_TRAIN_PATH).is_file()
+        and Path(CACHED_FEATURES_TRAIN_PATH).is_file()
+    ):
+        # Run a single forward pass using train/test image dataloaders, and cache
+        # features to train/test files
+        cache_bb_features_start = timer()
+        print("Caching backbone features for training image set")
+        engine.extract_backbone_features(
+            backbone,
+            train_image_dataloader,
+            device,
+            CACHED_FEATURES_TRAIN_PATH,
+        )
+        print("Caching backbone features for test image set")
+        engine.extract_backbone_features(
+            backbone,
+            test_image_dataloader,
+            device,
+            CACHED_FEATURES_TEST_PATH,
+        )
+        cache_bb_features_end = timer()
+        print(
+            f"Caching backbone features on train/test dataset took {cache_bb_features_end - cache_bb_features_start:.3f} seconds"
+        )
     # Use cached features to create train/test feature dataloaders
     train_dataloader, test_dataloader = data_setup.create_cached_feature_dataloaders(
         train_cached_features_path=CACHED_FEATURES_TRAIN_PATH,
@@ -289,90 +303,6 @@ def extract_backbone_param_groups(
             )
 
     return param_groups
-
-
-# This logic is messy and hard codes assumptions for now
-# [TODO] update scheduler creation to be cleaner/more configurable
-"""
-def create_scheduler_and_attach_to_optimizer(
-    optimizer: torch.optim.Optimizer,
-    unfrozen_backbone_blocks: int,
-    training_args: TrainArgs,
-):
-
-    scheduler = None
-    if training_args.epochs <= 1:
-        print(
-            f"Using scheduler: None. Maximum training epochs: {training_args.epochs}, is less than or equal to 1."
-        )
-        return None
-
-    # lr_schedule_patience presence indicates to use ReduceLROnPlateau for now.  However currently
-    # the choice is hard coded to use composite warmup + cosineAnnealing if any backbone blocks
-    # are unfrozen, even if lr_schedule_patience is set.
-    if (
-        training_args.lr_schedule_patience is not None
-        and not unfrozen_backbone_blocks > 0
-    ):
-        print(
-            f"schedule_patience set to {training_args.lr_schedule_patience}, creating lr scheduler"
-        )
-        # min mode, as we will monitor and react to loss metric for now- can make this configurable later
-        scheduler = ReduceLROnPlateau(
-            optimizer=optimizer,
-            mode="min",
-            factor=0.1,
-            patience=training_args.lr_schedule_patience,
-            min_lr=1e-6,
-        )
-
-    # If unfrozen backbone layers exist, use cosine annealing scheduler instead
-    # This is mutually exculsive with arts.lr_schedule-patience, that vlue should NOT be
-    # Set when not using a scheduler that uses it.
-
-    # Experimenting with warmup- note that this code won't be valid for epochs = 1
-    # will make this more explicit later.
-    elif unfrozen_backbone_blocks > 0:
-        warmup_epochs = min(5, max(1, training_args.epochs // 10))
-        cosine_epochs = training_args.epochs - warmup_epochs
-
-        # Warm up every parameter group from 10% of it's configured LR
-        warmup_scheduler = LinearLR(
-            optimizer=optimizer,
-            start_factor=0.1,
-            end_factor=1.0,
-            total_iters=warmup_epochs,
-        )
-        cosine_scheduler = CosineAnnealingLR(
-            optimizer=optimizer,
-            T_max=cosine_epochs,
-            eta_min=1e-6,
-        )
-
-        scheduler = SequentialLR(
-            optimizer=optimizer,
-            schedulers=[
-                warmup_scheduler,
-                cosine_scheduler,
-            ],
-            milestones=[warmup_epochs],
-        )
-        print(
-            f"Using warmup + cosine scheduler: "
-            f"warmup_epochs={warmup_epochs}, "
-            f"cosine_epochs={cosine_epochs}"
-        )
-
-    if getattr(scheduler, "_schedulers", None):
-        print(
-            f"Using composite scheduler {scheduler.__class__.__name__}: with schedulers: {[s.__class__.__name__ for s in scheduler._schedulers]}"
-        )
-    elif scheduler is not None:
-        print(f"Using scheduler {scheduler.__class__.__name__}")
-    else:
-        print("Using scheduler: None")
-    return scheduler
-    """
 
 
 def create_scheduler_and_attach_to_optimizer(
@@ -544,8 +474,8 @@ def get_optimizer(model: nn.Module, args: TrainArgs):
             "params": [
                 param for param in model.classifier.parameters() if param.requires_grad
             ],
-            "lr": args.lr,
-            "weight_decay": args.weight_decay,
+            "lr": args.classifier_lr,
+            "weight_decay": args.classifier_wd,
         }
     ]
 
@@ -563,7 +493,9 @@ def get_optimizer(model: nn.Module, args: TrainArgs):
         )
     # Top level lr here is a fallback, but should be overriden by values in
     # param groups
-    optimizer = torch.optim.AdamW(param_groups, lr=args.lr)
+    optimizer = torch.optim.AdamW(param_groups, lr=args.classifier_lr)
+
+    # Log initial param groups for debugging
     print(f"Using optimizer {optimizer.__class__.__name__} with param groups:")
     for i, group in enumerate(optimizer.param_groups):
         num_tensors = len(group["params"])
@@ -685,30 +617,30 @@ def get_device():
         return "cpu"
 
 
-def get_tensorboard_writer(args: TrainArgs):
+def generate_wandb_run_name(prefix: str | None = None):
     timestamp = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y%m%d_%H%M%S")
-    run_name = f"efnet_b0_ep{args.epochs}_lr{args.lr}_esp{args.early_stop_patience}_lrp{args.lr_schedule_patience}_wd{args.weight_decay}_ts_{timestamp}"
-    return SummaryWriter(log_dir=f"runs/efficientnet_b0/{run_name}")
+    run_prefix = prefix if prefix else "run_efnet_bo_transfer_"
+    return run_prefix + f"_{timestamp}"
 
 
-def write_tensorboard_hyperparams(
-    writer: SummaryWriter, results: dict[str, Any], args: TrainArgs
-):
-    writer.add_hparams(
-        {
-            "lr": args.lr,
-            "weight_decay": args.weight_decay,
-            "batch_size": args.batch_size,
-            "scheduled_epochs": args.epochs,
-            "early_stop_patience": args.early_stop_patience,
-            "lr_schedule_patience": args.lr_schedule_patience,
-        },
-        {
-            "best_accuracy": results["best_checkpoint"]["test_acc"],
-            "best_loss": results["best_checkpoint"]["test_loss"],
-            "epochs_completed": results["train_metadata"]["epochs_completed"],
-            "early_stopped": results["train_metadata"]["stopped_early"],
-        },
+def write_wandb_summary(train_time, results: dict[str, Any], args: TrainArgs):
+    if wandb.run is not None:
+        wandb.summary["train_time_seconds"] = train_time
+        wandb.summary["epochs_completed"] = results["train_metadata"][
+            "epochs_completed"
+        ]
+        wandb.summary["early_stopped"] = results["train_metadata"]["stopped_early"]
+        wandb.summary["best_epoch"] = results["best_checkpoint"]["epoch"]
+        wandb.summary["best_test_accuracy"] = results["best_checkpoint"]["test_acc"]
+        wandb.summary["best_test_loss"] = results["best_checkpoint"]["test_loss"]
+
+
+def init_wandb(args: TrainArgs):
+    run_name = generate_wandb_run_name(args.wandb_run_name)
+    wandb.init(
+        project="general_exporation",
+        name=run_name,
+        config=vars(args),
     )
 
 

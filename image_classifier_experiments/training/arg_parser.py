@@ -5,13 +5,16 @@ from typing import Literal
 
 @dataclass
 class TrainArgs:
-    num_workers: int = 0
+    load_model_from_artifact: str | None = None
     augmentation_config: str | None = None
     enable_gpu_augmentation: bool = False
     enable_ram_loaded_images: bool = False
     enable_backbone_caching: bool = False
+    bypass_cache_generation: bool = False
     epochs: int = 5
-    lr: float = 0.001
+    early_stop_patience: int | None = None
+    classifier_lr: float = 0.001
+    classifier_wd: float = 0.0
     classifier_dropout: float | None = None
 
     # This argument expects a space delimited list of int:float pairs, e.g. 2:1e-3
@@ -26,15 +29,8 @@ class TrainArgs:
     # 3 will start with lr 1e-4
     unfreeze_bb_blocks_with_lr: list[tuple[int, float]] | None = None
     bb_block_wd: list[float] | None = None
-    load_model_from_artifact: str | None = None
     batch_size: int = 32
-    early_stop_patience: int | None = None
-    weight_decay: float = 0.0
-    label_smoothing: float = 0.0
-    save: Literal["file", "s3"] | None = None
-    s3_bucket: str | None = None
-    s3_key_prefix: str | None = None
-    enable_tensorboard: bool = False
+    num_workers: int = 0
     # Experiment with adding more scheduler config
     scheduler_type: Literal["ReduceLROnPlateau", "CosineAnnealingLR"] | None = None
     # only compatible with ReduceLROnPlateau, ensure this is validated
@@ -46,6 +42,12 @@ class TrainArgs:
     enable_lr_warmup: bool = False
     warmup_epochs: int | None = None
     warmup_factors: tuple[float, float] | None = None
+    label_smoothing: float = 0.0
+    save: Literal["file", "s3"] | None = None
+    s3_bucket: str | None = None
+    s3_key_prefix: str | None = None
+    enable_wandb: bool = False
+    wandb_run_name: str | None = None
 
 
 # Currently the file and s3 saving locations are hard coded
@@ -54,9 +56,8 @@ def parse_train_args() -> TrainArgs:
     parser = argparse.ArgumentParser(description="Training engine for image classifier")
 
     parser.add_argument(
-        "--num_workers",
-        type=int,
-        default=0,
+        "--load_model_from_artifact",
+        type=str,
     )
 
     parser.add_argument(
@@ -80,15 +81,31 @@ def parse_train_args() -> TrainArgs:
     )
 
     parser.add_argument(
+        "--bypass_cache_generation",
+        action="store_true",
+    )
+
+    parser.add_argument(
         "--epochs",
         type=int,
         default=5,
     )
 
     parser.add_argument(
-        "--lr",
+        "--early_stop_patience",
+        type=int,
+    )
+
+    parser.add_argument(
+        "--classifier_lr",
         type=float,
         default=0.001,
+    )
+
+    parser.add_argument(
+        "--classifier_wd",
+        type=float,
+        default=0.0,
     )
 
     parser.add_argument(
@@ -111,51 +128,15 @@ def parse_train_args() -> TrainArgs:
     )
 
     parser.add_argument(
-        "--load_model_from_artifact",
-        type=str,
-    )
-
-    parser.add_argument(
         "--batch_size",
         type=int,
         default=32,
     )
 
     parser.add_argument(
-        "--early_stop_patience",
+        "--num_workers",
         type=int,
-    )
-
-    parser.add_argument(
-        "--weight_decay",
-        type=float,
-        default=0.0,
-    )
-
-    parser.add_argument(
-        "--label_smoothing",
-        type=float,
-        default=0.0,
-    )
-
-    parser.add_argument(
-        "--save",
-        choices=["file", "s3"],
-    )
-
-    parser.add_argument(
-        "--s3_bucket",
-        type=str,
-    )
-
-    parser.add_argument(
-        "--s3_key_prefix",
-        type=str,
-    )
-
-    parser.add_argument(
-        "--enable_tensorboard",
-        action="store_true",
+        default=0,
     )
 
     parser.add_argument(
@@ -193,6 +174,37 @@ def parse_train_args() -> TrainArgs:
         type=float_pair,
     )
 
+    parser.add_argument(
+        "--label_smoothing",
+        type=float,
+        default=0.0,
+    )
+
+    parser.add_argument(
+        "--save",
+        choices=["file", "s3"],
+    )
+
+    parser.add_argument(
+        "--s3_bucket",
+        type=str,
+    )
+
+    parser.add_argument(
+        "--s3_key_prefix",
+        type=str,
+    )
+
+    parser.add_argument(
+        "--enable_wandb",
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--wandb_run_name",
+        type=str,
+    )
+
     try:
         args = parser.parse_args()
     except ValueError as e:
@@ -200,25 +212,21 @@ def parse_train_args() -> TrainArgs:
 
     validate_args(args)
     return TrainArgs(
-        num_workers=args.num_workers,
+        load_model_from_artifact=args.load_model_from_artifact,
         augmentation_config=args.augmentation_config,
         enable_gpu_augmentation=args.enable_gpu_augmentation,
         enable_ram_loaded_images=args.enable_ram_loaded_images,
         enable_backbone_caching=args.enable_backbone_caching,
+        bypass_cache_generation=args.bypass_cache_generation,
         epochs=args.epochs,
         early_stop_patience=args.early_stop_patience,
-        lr=args.lr,
+        classifier_lr=args.classifier_lr,
+        classifier_wd=args.classifier_wd,
         classifier_dropout=args.classifier_dropout,
-        weight_decay=args.weight_decay,
         unfreeze_bb_blocks_with_lr=args.unfreeze_bb_blocks_with_lr,
         bb_block_wd=args.bb_block_wd,
-        load_model_from_artifact=args.load_model_from_artifact,
         batch_size=args.batch_size,
-        label_smoothing=args.label_smoothing,
-        save=args.save,
-        s3_bucket=args.s3_bucket,
-        s3_key_prefix=args.s3_key_prefix,
-        enable_tensorboard=args.enable_tensorboard,
+        num_workers=args.num_workers,
         scheduler_type=args.scheduler_type,
         reducelr_patience=args.reducelr_patience,
         reducelr_factor=args.reducelr_factor,
@@ -226,6 +234,12 @@ def parse_train_args() -> TrainArgs:
         enable_lr_warmup=args.enable_lr_warmup,
         warmup_epochs=args.warmup_epochs,
         warmup_factors=args.warmup_factors,
+        label_smoothing=args.label_smoothing,
+        save=args.save,
+        s3_bucket=args.s3_bucket,
+        s3_key_prefix=args.s3_key_prefix,
+        enable_wandb=args.enable_wandb,
+        wandb_run_name=args.wandb_run_name,
     )
 
 
@@ -260,6 +274,10 @@ def validate_args(args):
         raise ValueError(
             "Invalid Training Args: if enable_backbone_caching enabled, no augmentation or backbaone unfreezing args can be set"
         )
+    if args.bypass_cache_generation and not args.enable_backbone_caching:
+        raise ValueError(
+            "Invalid Training Args: bypass_cache_generation cannot be specified without enable_backbone_caching."
+        )
 
     # validate/normalize args related to staged backbone unfreeze and associated lr/wd per stage
     args.bb_block_wd = validate_and_normalize_bb_wd(
@@ -274,6 +292,9 @@ def validate_args(args):
         raise ValueError(
             "Invalid Training Args: If 'save' is S3, both s3_bucket and s3_key_prefix Must be set"
         )
+
+    if args.wandb_run_name and not args.enable_wandb:
+        raise ValueError("wandb_run_name cannot be set without enable_wandb.")
 
 
 def validate_and_normalize_bb_wd(

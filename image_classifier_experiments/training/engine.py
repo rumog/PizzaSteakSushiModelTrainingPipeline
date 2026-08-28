@@ -8,8 +8,18 @@ from torch import nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+
+import wandb
+
+
+def get_optimizer_group_metrics(optimizer: torch.optim.Optimizer):
+
+    metrics = {}
+    for i, group in enumerate(optimizer.param_groups):
+        metrics[f"optimizer/group {i}/lr"] = group["lr"]
+        metrics[f"optimizer/group {i}/wd"] = group["weight_decay"]
+    return metrics
 
 
 def get_current_lr(optimizer):
@@ -35,11 +45,35 @@ def get_backbone_lrs_string(optimizer):
         return "None"
 
 
-def get_backbone_lrs_string2(optimizer):
+def get_backbone_lrs_string2(optimizer: torch.optim.Optimizer):
     lr_strings = []
-    for i, group in enumerate(optimizer.param_groups):
+
+    # By current design, group 0 is always the classifier params
+    # groups for indices > 0 are assoiated with each respective
+    # stage of unfrozen backbone layers
+    if not len(optimizer.param_groups) > 1:
+        return "None"
+
+    for i, group in enumerate(optimizer.param_groups, start=1):
         lr_strings.append(f"{i}:{group['lr']:.7f}")
-        # print(f"Group {i} | LR: {group['lr']:.5f} | WD: {group['weight_decay']}")
+
+    if lr_strings:
+        return ",".join(lr_strings)
+    else:
+        return "None"
+
+
+def get_backbone_wds_string2(optimizer: torch.optim.Optimizer):
+    lr_strings = []
+
+    # By current design, group 0 is always the classifier params
+    # groups for indices > 0 are assoiated with each respective
+    # stage of unfrozen backbone layers
+    if not len(optimizer.param_groups) > 1:
+        return "None"
+
+    for i, group in enumerate(optimizer.param_groups, start=1):
+        lr_strings.append(f"{i}:{group['weight_decay']:.7f}")
 
     if lr_strings:
         return ",".join(lr_strings)
@@ -90,11 +124,6 @@ def train_step(
 ):
 
     # 0. Put model into training mode
-    # If only the classifier was sent in (backbone caching)
-    # then it won't have backbone.  If it does, then it should be frozen
-    # This can really be cleaned up much better, right now it's
-    # dependent on things it doesn't need to be (e.g. both outside and inside)
-    # this function, attributes of the model are being initialized for training
     model.train()
     # below is for debugging, only works for top level model, not during backbone caching
     # where only classifier is passed in to train step
@@ -108,23 +137,21 @@ def train_step(
         # Move data to device
         y_batch = y_batch.to(device, non_blocking=True)
 
-        if gpu_transform is not None and ram_caching_enabled:
-            X_batch = [
-                gpu_transform(image.to(device, non_blocking=True).float().div_(255.0))
-                for image in X_batch
-            ]
-            X_batch = torch.stack(X_batch)
-        elif gpu_transform is not None:
-            X_batch = X_batch.to(device, non_blocking=True)
-            X_batch = X_batch.float().div_(255.0)
-            X_batch = gpu_transform(X_batch)
+        if gpu_transform is not None:
+            if ram_caching_enabled:
+                X_batch = [
+                    gpu_transform(
+                        image.to(device, non_blocking=True).float().div_(255.0)
+                    )
+                    for image in X_batch
+                ]
+                X_batch = torch.stack(X_batch)
+            else:
+                X_batch = X_batch.to(device, non_blocking=True)
+                X_batch = X_batch.float().div_(255.0)
+                X_batch = gpu_transform(X_batch)
         else:
             X_batch = X_batch.to(device, non_blocking=True)
-
-        # GPU transform is enabled, perform transform now
-        # if gpu_transform is not None:
-        #    X_batch = X_batch.float().div_(255.0)
-        #    X_batch = gpu_transform(X_batch)
 
         # 1. Forward Pass
         y_logits = model(X_batch)
@@ -203,13 +230,6 @@ def test_step(
     return test_loss, test_acc
 
 
-# Keeping a note here on patience, move this somewhre when yu get a chance
-# Learning Rate Schedules: Early stopping patience must always be longer than your Learning Rate (LR)
-# scheduler's patience or decay frequency. If you use a ReduceLROnPlateau scheduler with a patience of 3,
-# your early stopping patience should be around 7–10 epochs to give the
-# model time to stabilize and find a better local minimum at the lower learning rate.
-
-
 def train_model(
     model: nn.Module,
     train_dataloader: DataLoader,
@@ -221,7 +241,7 @@ def train_model(
     patience: int | None = None,
     scheduler: Any | None = None,
     device: torch.device | None = None,
-    writer: SummaryWriter | None = None,
+    # writer: SummaryWriter | None = None,
     caching_enabled: bool = False,
     gpu_transform: Callable = None,
     test_transform: Callable = None,
@@ -304,53 +324,17 @@ def train_model(
         if epoch_backbone_lr is not None:
             results["backbone_lr"].append(epoch_backbone_lr)
 
-        # Also update writer for TensorBoard integration
-        if writer is not None:
-            # Plot Test vs Train on same graph for loss/acc
-            writer.add_scalars(
-                "Loss Comparison",
-                {
-                    "train": train_loss,
-                    "test": test_loss,
-                },
-                epoch,
-            )
-
-            writer.add_scalars(
-                "Accuracy Comparison",
-                {
-                    "train": train_acc,
-                    "test": test_acc,
-                },
-                epoch,
-            )
-
-            # plot individual graphs
-            writer.add_scalar(
-                "Loss/train",
-                train_loss,
-                epoch,
-            )
-            writer.add_scalar(
-                "Loss/test",
-                test_loss,
-                epoch,
-            )
-            writer.add_scalar(
-                "Accuracy/train",
-                train_acc,
-                epoch,
-            )
-            writer.add_scalar(
-                "Accuracy/test",
-                test_acc,
-                epoch,
-            )
-            writer.add_scalar(
-                "Learning Rate",
-                epoch_lr,
-                epoch,
-            )
+        # Also update writer for wandb integration
+        if wandb.run is not None:
+            metrics = {
+                "epoch": epoch + 1,
+                "train/loss": train_loss,
+                "train/accuracy": train_acc,
+                "test/loss": test_loss,
+                "test/accuracy": test_acc,
+            }
+            metrics.update(get_optimizer_group_metrics(optimizer))
+            wandb.log(metrics, step=epoch + 1)
 
         # Accuracy will be our measure for best- so "best[metric]" here really
         # means- [metric] associated with best accuracy. Want to make this clear
@@ -365,6 +349,7 @@ def train_model(
 
             # reset epochs without improvement
             epochs_without_improvement = 0
+
         else:
             # increment epochs without improvement
             epochs_without_improvement += 1
