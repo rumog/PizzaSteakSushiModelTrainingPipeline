@@ -265,7 +265,7 @@ def train_model(
         "test_loss": [],
         "test_acc": [],
         "lr": [],
-        "backbone_stage_lr": [[] for _ in optimizer.param_groups - 1],
+        "backbone_stage_lr": [[] for _ in range(len(optimizer.param_groups) - 1)],
     }
 
     # If backbone caching is enabled, then we're only training the classifier
