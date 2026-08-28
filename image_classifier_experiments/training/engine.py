@@ -34,6 +34,14 @@ def get_backbone_lr(optimizer):
     else:
         return None
 
+def get_backbone_lrs(optimizer: torch.optim.Optimizer):
+    backbone_stage_lrs = []
+    if not len(optimizer.param_groups) > 1:
+        backbone_stage_lrs
+
+    for group in optimizer.param_groups[1:]:
+        backbone_stage_lrs.append(group['lr'])
+    return backbone_stage_lrs
 
 def get_backbone_lrs_string(optimizer: torch.optim.Optimizer):
     lr_strings = []
@@ -255,8 +263,9 @@ def train_model(
         "test_loss": [],
         "test_acc": [],
         "lr": [],
-        "backbone_lr": [],
+        "backbone_stage_lr": [[] for _ in optimizer.param_groups()-1]
     }
+
 
     # If backbone caching is enabled, then we're only training the classifier
     # using cached features dataset, instead of training the whole model using
@@ -303,16 +312,22 @@ def train_model(
 
         epochs_completed += 1
         epoch_lr = get_current_lr(optimizer)
-        epoch_backbone_lr = get_backbone_lr(optimizer)
+
+        epoch_backbone_stage_lrs = 
 
         # Update results and best checkpoint tracking
         results["train_loss"].append(train_loss)
         results["train_acc"].append(train_acc)
         results["test_loss"].append(test_loss)
         results["test_acc"].append(test_acc)
-        results["lr"].append(epoch_lr)
-        if epoch_backbone_lr is not None:
-            results["backbone_lr"].append(epoch_backbone_lr)
+        results["classifier_lr"].append(epoch_lr)
+
+        # returns current backbone lrs e.g. [0.00001, 0.0001]
+        for i, lr in enumerate(get_backbone_lrs(optimizer)):
+            # results["backbone_stage_lr"] was created from optimizer
+            # groups, so there should never be an index bound issue
+            results["backbone_stage_lr"][i].append(lr)
+
 
         # Also update writer for wandb integration
         if wandb.run is not None:
