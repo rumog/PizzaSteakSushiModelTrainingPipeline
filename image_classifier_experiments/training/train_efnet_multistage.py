@@ -37,6 +37,9 @@ from image_classifier_experiments.model_build.efficientnet_b0_transfer import (
 from image_classifier_experiments.model_build.types.model_artifact_data import (
     ModelArtifactData,
 )
+from image_classifier_experiments.model_build.types.model_checkpoint import (
+    ModelMetadataSchema,
+)
 from image_classifier_experiments.training import engine
 from image_classifier_experiments.training.arg_parser import TrainArgs, parse_train_args
 from image_classifier_experiments.utils.helper_functions import (
@@ -107,7 +110,7 @@ def run_training():
 
     # If artifact loading is specified in training args, load artifact
     # else returns None
-    model_artifact = get_model_artifact(args)
+    model_artifact = load_model_artifact(args)
 
     # Create the model
     model_0 = EfficientNetB0TransferLearningModel(
@@ -574,9 +577,7 @@ def save_training_artifacts(
     if args.save is not None:
         model_architecture_name = model.__class__.__name__
 
-        # MODEL_NAME = "intro_pytorch_computer_vision_model_2.pth"
         model_architecture = {"name": model_architecture_name, "weights": "DEFAULT"}
-
         model_preprocessing = {"image_size": IMAGE_SIZE}
 
         # NOTE:
@@ -601,19 +602,25 @@ def save_training_artifacts(
         timestamp = datetime.now(ZoneInfo("America/Los_Angeles")).strftime(
             "%Y%m%d_%H%M%S"
         )
-        filename = f"{model_architecture_name}_ep{results['best_checkpoint']['epoch']}_{timestamp}_v{version}.pth"
+        filename = f"{model_architecture_name}_ep{results['best_checkpoint']['epoch']}_{timestamp}_v{version}_test_schema_backing.pth"
+
+        # validate model metadata matches expected schema and
+        # save dump from schema object to ensure consistent save
+        print("Validating model artifact schema...")
+        model_metadata_schema = ModelMetadataSchema.model_validate(model_metadata)
+        validated_model_metadata = model_metadata_schema.model_dump()
 
         if args.save == "s3":
             save_model_checkpoint_s3(
                 state_dict=results["best_checkpoint"]["state_dict"],
-                model_metadata=model_metadata,
+                model_metadata=validated_model_metadata,
                 bucket_name=args.s3_bucket,
                 object_key=f"{args.s3_key_prefix}/{filename}",
             )
         elif args.save == "file":
             save_model_checkpoint(
                 state_dict=results["best_checkpoint"]["state_dict"],
-                model_metadata=model_metadata,
+                model_metadata=validated_model_metadata,
                 target_dir=MODEL_SAVE_DIR,
                 file_name=filename,
             )
@@ -648,7 +655,7 @@ def write_wandb_summary(train_time, results: dict[str, Any], args: TrainArgs):
         wandb.summary["best_test_loss"] = results["best_checkpoint"]["test_loss"]
 
 
-def get_model_artifact(args: TrainArgs) -> ModelArtifactData:
+def load_model_artifact(args: TrainArgs) -> ModelArtifactData:
     model_artifact = None
     if args.load_artifact_from == "s3":
         model_loader = ModelArtifactS3Reader()
