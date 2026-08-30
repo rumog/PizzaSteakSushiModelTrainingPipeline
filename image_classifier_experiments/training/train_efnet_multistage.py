@@ -34,6 +34,9 @@ from image_classifier_experiments.model_build.artifact_loader.s3_model_reader im
 from image_classifier_experiments.model_build.efficientnet_b0_transfer import (
     EfficientNetB0TransferLearningModel,
 )
+from image_classifier_experiments.model_build.types.model_artifact_data import (
+    ModelArtifactData,
+)
 from image_classifier_experiments.training import engine
 from image_classifier_experiments.training.arg_parser import TrainArgs, parse_train_args
 from image_classifier_experiments.utils.helper_functions import (
@@ -645,7 +648,7 @@ def write_wandb_summary(train_time, results: dict[str, Any], args: TrainArgs):
         wandb.summary["best_test_loss"] = results["best_checkpoint"]["test_loss"]
 
 
-def get_model_artifact(args: TrainArgs):
+def get_model_artifact(args: TrainArgs) -> ModelArtifactData:
     model_artifact = None
     if args.load_artifact_from == "s3":
         model_loader = ModelArtifactS3Reader()

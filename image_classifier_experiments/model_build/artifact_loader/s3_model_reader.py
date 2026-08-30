@@ -10,6 +10,17 @@ from botocore.exceptions import (
     ParamValidationError,
 )
 
+from image_classifier_experiments.model_build.types.model_artifact_data import (
+    ModelArchitecture,
+    ModelArtifactData,
+    ModelMetadata,
+    ModelPreprocessing,
+    ModelTrainingInfo,
+)
+from image_classifier_experiments.model_build.types.model_checkpoint import (
+    ModelMetadataSchema,
+)
+
 
 class ModelArtifactS3Reader:  # Model storage format keys
     STATE_DICT_KEY = "state_dict"
@@ -19,7 +30,7 @@ class ModelArtifactS3Reader:  # Model storage format keys
     def __init__(self):
         self.s3 = boto3.client("s3")
 
-    def load_model_artifact(self, model_bucket, model_key):
+    def load_model_artifact(self, model_bucket, model_key) -> ModelArtifactData:
 
         try:
             response = self.s3.get_object(Bucket=model_bucket, Key=model_key)
@@ -57,11 +68,45 @@ class ModelArtifactS3Reader:  # Model storage format keys
         print(
             f"Successfully retrieved and read artifact object from {model_bucket}/{model_key}"
         )
+
         artifact = torch.load(io.BytesIO(content), map_location="cpu")
         self.validate_state_dict(artifact=artifact)
         print("successfully validated and loaded model artifact")
 
-        return artifact
+        model_metadata_schema = ModelMetadataSchema.model_validate(
+            artifact.get(self.METADATA_KEY)
+        )
+
+        model_architecture = ModelArchitecture(
+            name=model_metadata_schema.architecture.name,
+            weights=model_metadata_schema.architecture.weights,
+        )
+
+        model_preprocessing = ModelPreprocessing(
+            image_size=model_metadata_schema.preprocessing.image_size
+        )
+
+        model_training_info = None
+        if model_metadata_schema.training:
+            model_training_info = ModelTrainingInfo(
+                epoch=model_metadata_schema.training.epoch,
+                validation_loss=model_metadata_schema.training.validation_loss,
+                validation_accuracy=model_metadata_schema.training.validation_accuracy,
+            )
+
+        model_metadata = ModelMetadata(
+            class_list=model_metadata_schema.class_list,
+            architecture=model_architecture,
+            preprocessing=model_preprocessing,
+            training=model_training_info,
+        )
+
+        model_artifact_data = ModelArtifactData(
+            model_state_dict=artifact.get(self.STATE_DICT_KEY),
+            model_metadata=model_metadata,
+        )
+
+        return model_artifact_data
 
     def validate_state_dict(self, artifact: dict[str, Any]):
 

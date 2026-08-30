@@ -10,6 +10,7 @@ dependencies = [
     "mlxtend>=0.25.0",
     "numpy>=2.5.1",
     "pandas>=3.0.5",
+    "pydantic>=2.13.4",
     "requests>=2.34.2",
     "tensorboard>=2.21.0",
     "torch>=2.13.0",

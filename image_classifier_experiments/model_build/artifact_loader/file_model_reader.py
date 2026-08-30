@@ -3,6 +3,17 @@ from typing import Any
 
 import torch
 
+from image_classifier_experiments.model_build.types.model_artifact_data import (
+    ModelArchitecture,
+    ModelArtifactData,
+    ModelMetadata,
+    ModelPreprocessing,
+    ModelTrainingInfo,
+)
+from image_classifier_experiments.model_build.types.model_checkpoint import (
+    ModelMetadataSchema,
+)
+
 
 class ModelArtifactFileReader:  # Model storage format keys
     STATE_DICT_KEY = "state_dict"
@@ -21,7 +32,40 @@ class ModelArtifactFileReader:  # Model storage format keys
             )
         print("successfully validated and loaded model artifact")
 
-        return artifact
+        model_metadata_schema = ModelMetadataSchema.model_validate(
+            artifact.get(self.METADATA_KEY)
+        )
+
+        model_architecture = ModelArchitecture(
+            name=model_metadata_schema.architecture.name,
+            weights=model_metadata_schema.architecture.weights,
+        )
+
+        model_preprocessing = ModelPreprocessing(
+            image_size=model_metadata_schema.preprocessing.image_size
+        )
+
+        model_training_info = None
+        if model_metadata_schema.training:
+            model_training_info = ModelTrainingInfo(
+                epoch=model_metadata_schema.training.epoch,
+                validation_loss=model_metadata_schema.training.validation_loss,
+                validation_accuracy=model_metadata_schema.training.validation_accuracy,
+            )
+
+        model_metadata = ModelMetadata(
+            class_list=model_metadata_schema.class_list,
+            architecture=model_architecture,
+            preprocessing=model_preprocessing,
+            training=model_training_info,
+        )
+
+        model_artifact_data = ModelArtifactData(
+            model_state_dict=artifact.get(self.STATE_DICT_KEY),
+            model_metadata=model_metadata,
+        )
+
+        return model_artifact_data
 
     def validate_state_dict(self, artifact: dict[str, Any]):
 

@@ -5,6 +5,10 @@ import torch
 import torchvision
 from torch import nn
 
+from image_classifier_experiments.model_build.types.model_artifact_data import (
+    ModelArtifactData,
+)
+
 WEIGHTS = torchvision.models.EfficientNet_B0_Weights.DEFAULT
 DEFAULT_CLASSIFIER_DROPOUT = 0.2
 STATE_DICT_KEY = "state_dict"
@@ -14,7 +18,7 @@ class EfficientNetB0TransferLearningModel(nn.Module):
     def __init__(
         self,
         num_classes: int,
-        from_artifact: dict[str, Any] | None = None,
+        from_artifact: ModelArtifactData | None = None,
         unfrozen_backbone_blocks: int = 0,
         dropout_override: float | None = None,
         # device defult to cpu for loading purposes, so you can load a model trained on
@@ -49,12 +53,13 @@ class EfficientNetB0TransferLearningModel(nn.Module):
             ),
         )
 
+        # If a load-from artifact was specified, load state dict from artifact
         if self.from_artifact is not None:
             print("Load from artifact specified, loading artifact state_dict")
-            self.load_state_dict(self.from_artifact["state_dict"])
+            self.load_state_dict(self.from_artifact.model_state_dict)
             print("Successfully loaded model weights from artifact")
             print(
-                f"Verify state_dict matches artifact: {self.matches_state_dict(self.from_artifact['state_dict'])}"
+                f"Verify state_dict matches artifact: {self.matches_state_dict(self.from_artifact.model_state_dict)}"
             )
 
         # Set trainability params
