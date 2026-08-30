@@ -15,70 +15,34 @@ import wandb
 
 def get_optimizer_group_metrics(optimizer: torch.optim.Optimizer):
     metrics = {}
-    if not len(optimizer.param_groups) > 1:
-        return metrics
 
-    for i, group in enumerate(optimizer.param_groups[1:], start=1):
+    for i, group in enumerate(optimizer.param_groups):
         metrics[f"optimizer/group {i}/lr"] = group["lr"]
         metrics[f"optimizer/group {i}/wd"] = group["weight_decay"]
     return metrics
 
 
-def get_current_lr(optimizer):
-    return optimizer.param_groups[0]["lr"]
+def get_optimizer_groups_config(optimizer: torch.optim.Optimizer, config_key: str):
+    param_group_configs = []
+    if not config_key:
+        return param_group_configs
+    for group in optimizer.param_groups:
+        param_group_configs.append(group[config_key])
+    return param_group_configs
 
 
-def get_backbone_lr(optimizer):
-    if len(optimizer.param_groups) > 1:
-        return optimizer.param_groups[1]["lr"]
-    else:
-        return None
-
-
-def get_backbone_lrs(optimizer: torch.optim.Optimizer):
-    backbone_stage_lrs = []
-    if not len(optimizer.param_groups) > 1:
-        return backbone_stage_lrs
-
-    for group in optimizer.param_groups[1:]:
-        backbone_stage_lrs.append(group["lr"])
-    return backbone_stage_lrs
-
-
-def get_backbone_lrs_string(optimizer: torch.optim.Optimizer):
+def print_optimizier_group_metrics(optimizer: torch.optim.Optimizer):
     lr_strings = []
+    wd_strings = []
 
-    # By current design, group 0 is always the classifier params
-    # groups for indices > 0 are assoiated with each respective
-    # stage of unfrozen backbone layers
-    if not len(optimizer.param_groups) > 1:
-        return "None"
+    for i, group in enumerate(optimizer.param_groups):
+        lr_strings.append(f"[{group['lr']:.7g}]")
+        wd_strings.append(f"[{group['weight_decay']:.7g}]")
 
-    for i, group in enumerate(optimizer.param_groups[1:], start=1):
-        lr_strings.append(f"{i}:{group['lr']:.7g}")
+    lr_string = f"LR: {','.join(lr_strings)}" if lr_strings else "LR: [None]"
+    wd_string = f"WD: {','.join(wd_strings)}" if wd_strings else "WD: [None]"
 
-    if lr_strings:
-        return ",".join(lr_strings)
-    else:
-        return "None"
-
-
-def get_backbone_wds_string(optimizer: torch.optim.Optimizer):
-    lr_strings = []
-
-    # By current design, group 0 is always the classifier params
-    # groups for indices > 0 are assoiated with each respective
-    # stage of unfrozen backbone layers
-    if not len(optimizer.param_groups) > 1:
-        return "None"
-
-    for i, group in enumerate(optimizer.param_groups[1:], start=1):
-        lr_strings.append(f"{i}:{group['weight_decay']:.7g}")
-
-    if lr_strings:
-        return ",".join(lr_strings)
-    else:
-        return "None"
+    return f"{lr_string} | {wd_string}"
 
 
 def extract_backbone_features(
@@ -102,7 +66,7 @@ def extract_backbone_features(
 
     features = torch.cat(all_features)
     labels = torch.cat(all_labels)
-
+    print(f"Saving cached features to: {output_dir}")
     torch.save(
         {
             "features": features,
@@ -254,7 +218,6 @@ def train_model(
     best_test_acc = float("-inf")
     best_test_loss = None
     best_state_dict = None
-    best_lr = None
 
     epochs_without_improvement = 0
     epochs_completed = 0
@@ -264,8 +227,8 @@ def train_model(
         "train_acc": [],
         "test_loss": [],
         "test_acc": [],
-        "classifier_lr": [],
-        "backbone_stage_lr": [[] for _ in range(len(optimizer.param_groups) - 1)],
+        "optimizer_group_lr": [[] for _ in range(len(optimizer.param_groups))],
+        "optimizer_group_wd": [[] for _ in range(len(optimizer.param_groups))],
     }
 
     # If backbone caching is enabled, then we're only training the classifier
@@ -312,20 +275,22 @@ def train_model(
             )
 
         epochs_completed += 1
-        epoch_lr = get_current_lr(optimizer)
 
         # Update results and best checkpoint tracking
         results["train_loss"].append(train_loss)
         results["train_acc"].append(train_acc)
         results["test_loss"].append(test_loss)
         results["test_acc"].append(test_acc)
-        results["classifier_lr"].append(epoch_lr)
 
-        # returns current backbone lrs e.g. [0.00001, 0.0001]
-        for i, lr in enumerate(get_backbone_lrs(optimizer)):
-            # results["backbone_stage_lr"] was created from optimizer
-            # groups, so there should never be an index bound issue
-            results["backbone_stage_lr"][i].append(lr)
+        # update lr history for all param groups in optimizer
+        for i, lr in enumerate(get_optimizer_groups_config(optimizer, config_key="lr")):
+            results["optimizer_group_lr"][i].append(lr)
+
+        # update wd history for all param groups in optimizer
+        for i, wd in enumerate(
+            get_optimizer_groups_config(optimizer, config_key="weight_decay")
+        ):
+            results["optimizer_group_wd"][i].append(wd)
 
         # Also update writer for wandb integration
         if wandb.run is not None:
@@ -345,7 +310,6 @@ def train_model(
             best_test_acc = test_acc
             best_test_loss = test_loss
             best_epoch = epoch
-            best_lr = epoch_lr
             # MAKE SURE this is a deep copy- not just a copy of the reference which
             # always poitns to the most current state of the model's state_dict
             best_state_dict = copy.deepcopy(model.state_dict())
@@ -360,11 +324,11 @@ def train_model(
         if epochs > 50:
             if epoch % 10 == 0:
                 tqdm.write(
-                    f"Epoch: {epoch} -- Classifier LR: {epoch_lr} | -- BB LR: [{get_backbone_lrs_string(optimizer)}] | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} | Epochs w/o accuracy impr: {epochs_without_improvement}\n"
+                    f"Epoch: {epoch} | {print_optimizier_group_metrics(optimizer)} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} | Epochs w/o accuracy impr: {epochs_without_improvement}\n"
                 )
         else:
             tqdm.write(
-                f"Epoch: {epoch} -- Classifier LR: {epoch_lr} | -- BB LR: [{get_backbone_lrs_string(optimizer)}] | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} Epochs w/o accuracy impr: {epochs_without_improvement}\n"
+                f"Epoch: {epoch} | {print_optimizier_group_metrics(optimizer)} | Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f} Epochs w/o accuracy impr: {epochs_without_improvement}\n"
             )
 
         # stop early if epochs without improvement breaches patience
@@ -398,7 +362,6 @@ def train_model(
         },
         "best_checkpoint": {
             "epoch": best_epoch,
-            "epoch_lr": best_lr,
             "test_acc": best_test_acc,
             "test_loss": best_test_loss,
             "state_dict": best_state_dict,

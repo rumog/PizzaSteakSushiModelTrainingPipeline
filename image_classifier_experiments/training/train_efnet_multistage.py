@@ -25,6 +25,12 @@ from image_classifier_experiments.augmentation.augmentation_experiments import (
     B0_AUGMENTATION_EXPERIMENTS,
 )
 from image_classifier_experiments.data_setup import data_setup
+from image_classifier_experiments.model_build.artifact_loader.file_model_reader import (
+    ModelArtifactFileReader,
+)
+from image_classifier_experiments.model_build.artifact_loader.s3_model_reader import (
+    ModelArtifactS3Reader,
+)
 from image_classifier_experiments.model_build.efficientnet_b0_transfer import (
     EfficientNetB0TransferLearningModel,
 )
@@ -96,10 +102,14 @@ def run_training():
         test_transform=test_transform,
     )
 
+    # If artifact loading is specified in training args, load artifact
+    # else returns None
+    model_artifact = get_model_artifact(args)
+
     # Create the model
     model_0 = EfficientNetB0TransferLearningModel(
         num_classes=len(class_list),
-        from_artifact=args.load_model_from_artifact,
+        from_artifact=model_artifact,
         unfrozen_backbone_blocks=get_unfrozen_backbone_blocks(args),
         dropout_override=args.classifier_dropout,
     ).to(device)
@@ -633,6 +643,20 @@ def write_wandb_summary(train_time, results: dict[str, Any], args: TrainArgs):
         wandb.summary["best_epoch"] = results["best_checkpoint"]["epoch"]
         wandb.summary["best_test_accuracy"] = results["best_checkpoint"]["test_acc"]
         wandb.summary["best_test_loss"] = results["best_checkpoint"]["test_loss"]
+
+
+def get_model_artifact(args: TrainArgs):
+    model_artifact = None
+    if args.load_artifact_from == "s3":
+        model_loader = ModelArtifactS3Reader()
+        model_artifact = model_loader.load_model_artifact(
+            args.artifact_s3_bucket,
+            args.artifact_s3_key,
+        )
+    elif args.load_artifact_from == "file":
+        model_loader = ModelArtifactFileReader()
+        model_artifact = model_loader.load_model_artifact(args.artifact_file_path)
+    return model_artifact
 
 
 def init_wandb(args: TrainArgs):

@@ -5,7 +5,10 @@ from typing import Literal
 
 @dataclass
 class TrainArgs:
-    load_model_from_artifact: str | None = None
+    load_artifact_from: Literal["file", "s3"] | None = None
+    artifact_s3_bucket: str | None = None
+    artifact_file_path: str | None = None
+    artifact_s3_key: str | None = None
     augmentation_config: str | None = None
     enable_gpu_augmentation: bool = False
     enable_ram_loaded_images: bool = False
@@ -56,7 +59,22 @@ def parse_train_args() -> TrainArgs:
     parser = argparse.ArgumentParser(description="Training engine for image classifier")
 
     parser.add_argument(
-        "--load_model_from_artifact",
+        "--load_artifact_from",
+        choices=["file", "s3"],
+    )
+
+    parser.add_argument(
+        "--artifact_s3_bucket",
+        type=str,
+    )
+
+    parser.add_argument(
+        "--artifact_s3_key",
+        type=str,
+    )
+
+    parser.add_argument(
+        "--artifact_file_path",
         type=str,
     )
 
@@ -212,7 +230,10 @@ def parse_train_args() -> TrainArgs:
 
     validate_args(args)
     return TrainArgs(
-        load_model_from_artifact=args.load_model_from_artifact,
+        load_artifact_from=args.load_artifact_from,
+        artifact_s3_bucket=args.artifact_s3_bucket,
+        artifact_s3_key=args.artifact_s3_key,
+        artifact_file_path=args.artifact_file_path,
         augmentation_config=args.augmentation_config,
         enable_gpu_augmentation=args.enable_gpu_augmentation,
         enable_ram_loaded_images=args.enable_ram_loaded_images,
@@ -265,6 +286,9 @@ def float_pair(arg_value: str) -> tuple[float, float]:
 
 def validate_args(args):
 
+    # Validate correct argument config for loading model artifact from file or s3
+    validate_load_artifact_config(args)
+
     # If  backbone caching is enabled, you cannot run custom data augmentation or set backbone as trainable
     if args.enable_backbone_caching and (
         args.augmentation_config
@@ -295,6 +319,32 @@ def validate_args(args):
 
     if args.wandb_run_name and not args.enable_wandb:
         raise ValueError("wandb_run_name cannot be set without enable_wandb.")
+
+
+def validate_load_artifact_config(args):
+    if args.load_artifact_from == "s3" and (
+        (not args.artifact_s3_bucket or not args.artifact_s3_key)
+        or args.artifact_file_path
+    ):
+        raise ValueError(
+            f"If load_artifact_from is 's3', must include artifact_s3_bucket: {args.artifact_s3_bucket} and artifact_s3_key: "
+            f"{args.artifact_s3_key}, and must not include artifact_file_path: {args.artifact_file_path}"
+        )
+
+    if args.load_artifact_from == "file" and (
+        not args.artifact_file_path or args.artifact_s3_bucket or args.artifact_s3_key
+    ):
+        raise ValueError(
+            f"If load_artifact_from == 'file', must include artifact_file_path: {args.artifact_file_path}, and must not specify "
+            f"artifact_s3_bucket: {args.artifact_s3_bucket} or artifact_s3_key: {args.artifact_s3_key}"
+        )
+
+    if not args.load_artifact_from and (
+        args.artifact_s3_bucket or args.artifact_s3_key or args.artifact_file_path
+    ):
+        raise ValueError(
+            "Cannot specify include artifact loading source arguments without specifying load_artifact_from to."
+        )
 
 
 def validate_and_normalize_bb_wd(

@@ -1,19 +1,20 @@
 from pathlib import Path
+from typing import Any
 
 import torch
 import torchvision
 from torch import nn
 
 WEIGHTS = torchvision.models.EfficientNet_B0_Weights.DEFAULT
-ROOT_DIR = root_dir = Path("model")
 DEFAULT_CLASSIFIER_DROPOUT = 0.2
+STATE_DICT_KEY = "state_dict"
 
 
 class EfficientNetB0TransferLearningModel(nn.Module):
     def __init__(
         self,
         num_classes: int,
-        from_artifact: str | None = None,
+        from_artifact: dict[str, Any] | None = None,
         unfrozen_backbone_blocks: int = 0,
         dropout_override: float | None = None,
         # device defult to cpu for loading purposes, so you can load a model trained on
@@ -48,25 +49,13 @@ class EfficientNetB0TransferLearningModel(nn.Module):
             ),
         )
 
-        artifact = None
         if self.from_artifact is not None:
+            print("Load from artifact specified, loading artifact state_dict")
+            self.load_state_dict(self.from_artifact["state_dict"])
+            print("Successfully loaded model weights from artifact")
             print(
-                f"Got from_artifact: {self.from_artifact}, attempting to load model artifact weights"
+                f"Verify state_dict matches artifact: {self.matches_state_dict(self.from_artifact['state_dict'])}"
             )
-            artifact_file = ROOT_DIR / from_artifact
-            if artifact_file.is_file():
-                artifact = torch.load(artifact_file, map_location=torch.device(device))
-                self.load_state_dict(artifact["state_dict"])
-                print(
-                    f"Successfully loaded model weights from artifact: {artifact_file}"
-                )
-                print(
-                    f"Verify state_dict matches artifact: {self.matches_state_dict(artifact['state_dict'])}"
-                )
-            else:
-                raise ValueError(
-                    f"from_artifact value: {artifact_file} does not exist. Check that file exists and is entered correctly."
-                )
 
         # Set trainability params
 
