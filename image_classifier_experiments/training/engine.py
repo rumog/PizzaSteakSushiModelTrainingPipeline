@@ -1,16 +1,25 @@
 import copy
 import math
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import torch
 from torch import nn
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 import wandb
+from image_classifier_experiments.training.checkpoint.types.training_checkpoint import (
+    TrainingCheckpointMetadataSchema,
+)
+from image_classifier_experiments.training.checkpoint.types.training_checkpoint_data import (
+    TrainCheckpoint,
+)
+
+CHECKPOINT_DIR = "checkpoint"
 
 
 def get_optimizer_group_metrics(optimizer: torch.optim.Optimizer):
@@ -73,6 +82,68 @@ def extract_backbone_features(
             "labels": labels,
         },
         output_dir,
+    )
+
+
+def save_training_checkpoint_artifact(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scheduler: LRScheduler | ReduceLROnPlateau,
+    completed_epochs: int,
+    scheduled_epochs: int,
+    best_checkpoint: dict[str, Any],
+    epochs_without_improvement: int,
+    history: dict[str, Any],
+    target_dir: str = ".",
+    file_name: str = "checkpoint_latest.pth",
+):
+    target_dir_path = Path(target_dir) / CHECKPOINT_DIR
+    target_dir_path.mkdir(parents=True, exist_ok=True)
+
+    # Create model save path
+    assert file_name.endswith((".pth", ".pt")), (
+        "model_name should end with '.pt' or '.pth'"
+    )
+    checkpoint_save_path = target_dir_path / file_name
+
+    model_state_dict = copy.deepcopy(model.state_dict())
+    optimizer_state_dict = copy.deepcopy(optimizer.state_dict())
+    scheduler_state_dict = copy.deepcopy(scheduler.state_dict())
+
+    best_checkpoint_dict = {
+        "epoch": best_checkpoint.get("epoch"),
+        "test_acc": best_checkpoint.get("test_acc"),
+        "test_loss": best_checkpoint.get("test_loss"),
+        "state_dict": best_checkpoint.get("state_dict"),
+    }
+
+    train_metadata = {
+        "history": history,
+        "last_epoch": completed_epochs,
+        "scheduled_epochs": scheduled_epochs,
+        "epochs_without_improvement": epochs_without_improvement,
+        "best_epoch_checkpoint": best_checkpoint_dict,
+    }
+
+    # validate checkpoint metadata expected schema and
+    # save dump from schema object to ensure consistent save structure
+    print("Validating checkpoint metadata schema...")
+    checkpoint_metadata_schema = TrainingCheckpointMetadataSchema.model_validate(
+        train_metadata
+    )
+    validated_train_metadata = checkpoint_metadata_schema.model_dump()
+
+    training_checkpoint = {
+        "model_state_dict": model_state_dict,
+        "optimizer_state_dict": optimizer_state_dict,
+        "scheduler_state_dict": scheduler_state_dict,
+        "metadata": validated_train_metadata,
+        # - what happens to a wb run?  If you name it the same will it just resume? if so wb config
+    }
+
+    torch.save(
+        obj=training_checkpoint,
+        f=checkpoint_save_path,
     )
 
 
@@ -210,18 +281,12 @@ def train_model(
     gpu_transform: Callable = None,
     test_transform: Callable = None,
     ram_caching_enabled: bool = False,
+    resume_checkpoint: TrainCheckpoint | None = None,
+    run_dir: str | Path = ".",
 ):
     """Trains a model using CrossEntropyLoss and StochasticGradientDescent with given configuration"""
 
     # Results and checkpoint tracking
-    best_epoch = None
-    best_test_acc = float("-inf")
-    best_test_loss = None
-    best_state_dict = None
-
-    epochs_without_improvement = 0
-    epochs_completed = 0
-
     results = {
         "train_loss": [],
         "train_acc": [],
@@ -231,6 +296,38 @@ def train_model(
         "optimizer_group_wd": [[] for _ in range(len(optimizer.param_groups))],
     }
 
+    epochs_completed = 0
+    epochs_without_improvement = 0
+
+    best_epoch = None
+    best_test_acc = float("-inf")
+    best_test_loss = None
+    best_state_dict = None
+
+    if resume_checkpoint is not None:
+        print("Initializing training state from resume checkpoint...")
+        results = resume_checkpoint.metadata.history
+
+        epochs_completed = resume_checkpoint.metadata.last_epoch
+        epochs_without_improvement = (
+            resume_checkpoint.metadata.epochs_without_improvement
+        )
+
+        # update results and checkpoint tracking from resume checkpoing
+        best_epoch = resume_checkpoint.metadata.best_epoch_checkpoint.epoch
+        best_test_acc = resume_checkpoint.metadata.best_epoch_checkpoint.test_acc
+        best_test_loss = resume_checkpoint.metadata.best_epoch_checkpoint.test_loss
+        best_state_dict = resume_checkpoint.metadata.best_epoch_checkpoint.state_dict
+
+    """
+    # Loop only over the remaining epochs, but tell tqdm the full picture
+    for epoch in tqdm(
+        range(completed_epochs, total_epochs), 
+        desc="Executing model training...", 
+        initial=completed_epochs, 
+        total=total_epochs
+    ):
+    """
     # If backbone caching is enabled, then we're only training the classifier
     # using cached features dataset, instead of training the whole model using
     # the image dataset.  This drastically reduces train time, with the tradeoff
@@ -242,7 +339,15 @@ def train_model(
     else:
         train_model = model
 
-    for epoch in tqdm(range(epochs), desc="Executing model training..."):
+    # for epoch in tqdm(range(epochs), desc="Executing model training..."):
+    # NOTE: epochs (total epochs) is currently coming from the current training config, not the
+    # checkpoint's "scheduled_epochs".
+    for epoch in tqdm(
+        range(epochs_completed, epochs),
+        desc="Executing model training...",
+        initial=epochs_completed,
+        total=epochs,
+    ):
         train_loss, train_acc = train_step(
             model=train_model,
             dataloader=train_dataloader,
@@ -346,6 +451,30 @@ def train_model(
                 scheduler.step(test_loss)
             else:
                 scheduler.step()
+
+        # Saving training checkpoint for resumable training
+        best_checkpoint = {
+            "epoch": best_epoch,
+            "test_acc": best_test_acc,
+            "test_loss": best_test_loss,
+            "state_dict": best_state_dict,
+        }
+        best_checkpoint_check = {
+            k: v for k, v in best_checkpoint.items() if k != "state_dict"
+        }
+        print(f"\nBest Checpoint before saving: {best_checkpoint_check}")
+
+        save_training_checkpoint_artifact(
+            model=train_model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            completed_epochs=epochs_completed,
+            scheduled_epochs=epochs,
+            best_checkpoint=best_checkpoint,
+            epochs_without_improvement=epochs_without_improvement,
+            history=results,
+            target_dir=run_dir,
+        )
 
     # Ensure training ran and we have a valid trained checkpoint
     if best_state_dict is None or best_epoch is None:

@@ -197,3 +197,117 @@ def plot_loss_curves(results: dict[str, list[float]]):
     plt.legend()
 
     plt.show()
+
+
+# Helper debug funcrion for validating training checkpoint data
+# without printing out the huge state dict values
+def print_checkpoint_values(chkpt):
+    # 1. Safely extract a dictionary map of properties from your custom object
+    if isinstance(chkpt, dict):
+        chkpt_dict = chkpt
+    else:
+        try:
+            chkpt_dict = vars(chkpt)
+        except TypeError:
+            # Fallback if the class doesn't support vars()
+            chkpt_dict = {
+                attr: getattr(chkpt, attr)
+                for attr in dir(chkpt)
+                if not attr.startswith("__")
+            }
+
+    # 2. Iterate through the discovered state dicts
+    for dict_name, s_dict in chkpt_dict.items():
+        # Only process actual dictionaries (like model, optimizer, or scheduler states)
+        if not isinstance(s_dict, dict):
+            continue
+
+        print(f"\n=== 📦 {dict_name.upper()} ===")
+        for k, v in s_dict.items():
+            # Handle regular layer tensors (Model weights)
+            if hasattr(v, "shape"):
+                print(f"  {k:<35} -> Shape: {list(v.shape)}")
+
+            # Handle the nested Optimizer tracker tensors safely
+            elif k == "state" and isinstance(v, dict):
+                sample_id = next(iter(v)) if v else None
+                sample_shapes = (
+                    [
+                        f"{sk}: {list(sv.shape)}"
+                        for sk, sv in v[sample_id].items()
+                        if hasattr(sv, "shape")
+                    ]
+                    if sample_id
+                    else []
+                )
+                print(
+                    f"  {k:<35} -> Dict tracking {len(v)} weights. (e.g., Param {sample_id} tracking shapes: {sample_shapes})"
+                )
+
+            # Handle Optimizer Learning Rates & Hyperparameters
+            elif k == "param_groups" and isinstance(v, list):
+                clean_groups = [
+                    {
+                        g_key: g_val
+                        for g_key, g_val in group.items()
+                        if g_key != "params"
+                    }
+                    for group in v
+                ]
+                print(f"  {k:<35} -> Config Values: {clean_groups}")
+
+            # Handle Scheduler configurations and all other fallback values
+            else:
+                print(f"  {k:<35} -> Value: {v}")
+
+
+def matches_state_dict(source_dict, match_dict) -> bool:
+    """
+    Compares two PyTorch state_dicts (Model, Optimizer, or LR Scheduler).
+    Handles mixed types like Tensors, nested dicts, lists, and primitives.
+    """
+    # 1. Quick reference check
+    if source_dict is match_dict:
+        return True
+
+    # 2. Check if types match
+    if type(source_dict) is not type(match_dict):
+        return False
+
+    # 3. Handle dictionaries (recursive check)
+    if isinstance(source_dict, dict):
+        if set(source_dict.keys()) != set(match_dict.keys()):
+            return False
+        for key in source_dict:
+            if not matches_state_dict(source_dict[key], match_dict[key]):
+                return False
+        return True
+
+    # 4. Handle lists/tuples (recursive check)
+    if isinstance(source_dict, (list, tuple)):
+        if len(source_dict) != len(match_dict):
+            return False
+        for item1, item2 in zip(source_dict, match_dict):
+            if not matches_state_dict(item1, item2):
+                return False
+        return True
+
+    # 5. Handle PyTorch Tensors
+    if isinstance(source_dict, torch.Tensor):
+        # Cast match_dict to source_dict's device purely for the evaluation step.
+        # the loaded state dicts will reconcile to the correct training device
+        # outside of here, so for these purposes we can ignore device mitmatch
+        # between the resume_checkpoint state_dicts which are moved to CPU for
+        # initial load.
+        if source_dict.device != match_dict.device:
+            match_dict = match_dict.to(source_dict.device)
+
+        if (
+            source_dict.shape != match_dict.shape
+            or source_dict.dtype != match_dict.dtype
+        ):
+            return False
+        return torch.equal(source_dict, match_dict)
+
+    # 6. Handle standard Python primitives (int, float, str, bool, None)
+    return source_dict == match_dict

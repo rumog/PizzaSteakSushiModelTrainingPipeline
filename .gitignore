@@ -12,8 +12,10 @@ runs/
 model/
 eval_logging/
 wandb/
+runs/
 *.pth
 *.pt
+*.yaml
 .DS_STORE
 
 # Virtual environments

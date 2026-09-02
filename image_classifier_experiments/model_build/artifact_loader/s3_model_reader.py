@@ -31,7 +31,7 @@ class ModelArtifactS3Reader:  # Model storage format keys
         self.s3 = boto3.client("s3")
 
     def load_model_artifact(self, model_bucket, model_key) -> ModelArtifactData:
-
+        print(f"Retrieving model artifact {model_bucket}/{model_key} from S3...")
         try:
             response = self.s3.get_object(Bucket=model_bucket, Key=model_key)
             content = response["Body"].read()
@@ -65,9 +65,7 @@ class ModelArtifactS3Reader:  # Model storage format keys
                     print(f"AWS S3 ClientError ({error_code}): {e}")
             raise
 
-        print(
-            f"Successfully retrieved and read artifact object from {model_bucket}/{model_key}"
-        )
+        print(f"Successfully retrieved and read artifact object from s3")
 
         artifact = torch.load(io.BytesIO(content), map_location="cpu")
         self.validate_state_dict(artifact=artifact)

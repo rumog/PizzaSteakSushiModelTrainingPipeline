@@ -21,10 +21,6 @@ class EfficientNetB0TransferLearningModel(nn.Module):
         from_artifact: ModelArtifactData | None = None,
         unfrozen_backbone_blocks: int = 0,
         dropout_override: float | None = None,
-        # device defult to cpu for loading purposes, so you can load a model trained on
-        # a different device.  After model creation you can move it to device associated
-        # with current training platform
-        device: str = "cpu",
     ):
         super().__init__()
         self.num_classes = num_classes
