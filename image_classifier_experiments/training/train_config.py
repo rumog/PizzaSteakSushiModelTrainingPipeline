@@ -58,6 +58,7 @@ class TrainConfig:
     s3_bucket: str | None = None
     s3_key_prefix: str | None = None
     enable_wandb: bool = False
+    wandb_project: str | None = None
     wandb_run_id: str | None = None
 
     def __post_init__(self):
@@ -99,8 +100,8 @@ class TrainConfig:
         # validate/normalize args related to staged backbone unfreeze and associated lr/wd per stage
         self.bb_block_wd = self.validate_and_normalize_bb_wd()
 
-        # Validate scheduler args
         self.validate_scueduler_config()
+        self.validate_wandb_config()
 
         # Validate save for S3 path
         if self.save == "s3" and (not self.s3_bucket or not self.s3_key_prefix):
@@ -108,10 +109,18 @@ class TrainConfig:
                 "Invalid Training Args: If 'save' is S3, both s3_bucket and s3_key_prefix Must be set"
             )
 
-        if self.wandb_run_id and not self.enable_wandb:
+    def validate_wandb_config(self):
+        # can't use wandb-related params if not enabling wandb
+        if (self.wandb_run_id or self.wandb_project) and not self.enable_wandb:
             raise ValueError(
-                "wandb_run_id cannot be specified unless enable_wandb is set."
+                "wandb_project or wandb_run_id cannot be specified without enable_wandb."
             )
+
+        # wandb project name required when using wandb. Forcing it to be specified instead
+        # of using or generating a default minimizes potential for mistakes in resuming
+        # runs
+        if self.enable_wandb and not self.wandb_project:
+            raise ValueError("wandb_project is required when using enable_wandb.")
 
         if (
             self.resume_training_checkpoint and self.enable_wandb

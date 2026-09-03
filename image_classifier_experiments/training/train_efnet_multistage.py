@@ -93,8 +93,7 @@ IMAGE_SIZE = (224, 224)
 CACHED_FEATURES_TRAIN_PATH = "model/cached_features/train.pt"
 CACHED_FEATURES_TEST_PATH = "model/cached_features/test.pt"
 ENABLE_UNFROZEN_BACKBONE_TRAINING = True
-# add train_config propery for this
-WANDB_DEFAULT_PROJECT = "wandb_integration_testing"
+
 
 torch.manual_seed(42)
 torch.mps.manual_seed(42)
@@ -122,9 +121,9 @@ def run_training():
             run_id = init_wandb(train_config)
             train_config.wandb_run_id = run_id
         else:
-            # Resuming existing run.  Config validation ensures a
-            # run id is present in this case
-            resume_wandb_run(train_config.wandb_run_id)
+            # Resuming existing run. Config validation ensures a
+            # project and run id are present in this case
+            resume_wandb_run(train_config.wandb_project, train_config.wandb_run_id)
 
     # [TODO] "Validate" checkpoint against training config
     # For example, if the model has 2 stages of unfrozen backbone layers, but
@@ -968,7 +967,7 @@ def verify_resume_checkpoint_state_dicts_loaded_successfully(
 def init_wandb(train_config: TrainConfig):
     run_name = train_config.run_name
     run = wandb.init(
-        project=WANDB_DEFAULT_PROJECT,
+        project=train_config.wandb_project,
         name=run_name,
         config=vars(train_config),
     )
@@ -979,9 +978,9 @@ def init_wandb(train_config: TrainConfig):
     return run.id
 
 
-def resume_wandb_run(run_id: str):
+def resume_wandb_run(project: str, run_id: str):
     wandb.init(
-        project=WANDB_DEFAULT_PROJECT,
+        project=project,
         id=run_id,
         resume="must",
     )
