@@ -18,6 +18,7 @@ class TrainConfig:
     artifact_file_path: str | None = None
     artifact_s3_key: str | None = None
     augmentation_config: str | None = None
+    image_size_override: int | None = None
     enable_gpu_augmentation: bool = False
     enable_ram_loaded_images: bool = False
     enable_backbone_caching: bool = False

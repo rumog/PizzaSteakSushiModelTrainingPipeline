@@ -52,6 +52,11 @@ def parse_train_args():  # -> TrainConfig:
     )
 
     parser.add_argument(
+        "--image_size_override",
+        type=int,
+    )
+
+    parser.add_argument(
         "--enable_gpu_augmentation",
         action="store_true",
     )

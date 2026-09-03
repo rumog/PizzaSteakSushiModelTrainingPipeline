@@ -1,6 +1,4 @@
 import multiprocessing as mp
-import sys
-import traceback
 from collections.abc import Callable
 from datetime import datetime
 from itertools import accumulate
@@ -19,7 +17,6 @@ from torch.optim.lr_scheduler import (
     ReduceLROnPlateau,
     SequentialLR,
 )
-from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 
 import wandb
@@ -82,7 +79,7 @@ DEFAULT_WEIGHTS = torchvision.models.EfficientNet_B0_Weights.DEFAULT
 # torch ImageFolder
 RAW_TRANSFORM = transforms.Compose(
     [
-        transforms.Resize((500, 500)),
+        transforms.Resize((300, 300)),
         transforms.PILToTensor(),
     ]
 )
@@ -221,7 +218,7 @@ def run_training():
     if resume_checkpoint is not None:
         scheduler_state_dict = resume_checkpoint.scheduler_state_dict
 
-    scheduler = create_scheduler_and_attach_to_optimizer2(
+    scheduler = create_scheduler_and_attach_to_optimizer(
         optimizer=optimizer,
         args=train_config,
         state_dict=scheduler_state_dict,
@@ -428,97 +425,6 @@ def extract_backbone_param_groups(
 def create_scheduler_and_attach_to_optimizer(
     optimizer: torch.optim.Optimizer,
     args: TrainConfig,
-):
-    warmup_epochs = None
-    warmup_scheduler = None
-    scheduler = None
-    if args.epochs <= 1:
-        # This is also enforced in training args parsing, but protecting here as well
-        print(
-            f"Using scheduler: None. Maximum training epochs: {args.epochs}, is less than or equal to 1."
-        )
-        return None
-
-    min_lr = args.min_scheduler_lr if args.min_scheduler_lr is not None else 0
-
-    if args.enable_lr_warmup:
-        # Set warmup defaults
-        warmup_epochs = min(5, max(1, args.epochs // 10))
-        warmup_start_factor = 0.1
-        warmup_end_factor = 1.0
-
-        # Set warmup overrides from training args
-        if args.warmup_epochs:
-            warmup_epochs = args.warmup_epochs
-        if args.warmup_factors is not None:
-            warmup_start_factor = args.warmup_factors[0]
-            warmup_end_factor = args.warmup_factors[1]
-
-        warmup_scheduler = LinearLR(
-            optimizer=optimizer,
-            start_factor=warmup_start_factor,
-            end_factor=warmup_end_factor,
-            total_iters=warmup_epochs,
-        )
-
-    if args.scheduler_type == "ReduceLROnPlateau":
-        # reducelr_patience is validated during arg parse, must be present with valid value
-        reducelr_patience = args.reducelr_patience
-
-        if args.reducelr_factor is not None:
-            reducelr_factor = args.reducelr_factor
-        else:
-            reducelr_factor = 0.1
-            print(
-                f"ReduceLROnPlateau scheduler specified, but no reducelr_factor set, using default: {reducelr_factor}"
-            )
-
-        # min mode, as we will monitor and react to loss metric
-        scheduler = ReduceLROnPlateau(
-            optimizer=optimizer,
-            mode="min",
-            factor=reducelr_factor,
-            patience=reducelr_patience,
-            min_lr=min_lr,
-        )
-    elif args.scheduler_type == "CosineAnnealingLR":
-        cosine_epochs = args.epochs - warmup_epochs if warmup_scheduler else args.epochs
-        scheduler = CosineAnnealingLR(
-            optimizer=optimizer,
-            T_max=cosine_epochs,
-            eta_min=min_lr,
-        )
-
-    # NOTE The current warmup design uses a SequentialLR to create a composite with the
-    # warmup scheduler (LinearLR) and the chosen scheduler type. SequentialLR cannot currently
-    # compose LinearLR with metric-driven schedulers such as ReduceLROnPlateau.
-    # Whle the current command line argument parsing code explicitly prevents such a combination
-    # note that this code currently does NOT explicitly prevent any such combination. This may
-    # be added in the future if more schedulers become supported, but for now just be aware of this
-    if warmup_scheduler:
-        composite_scheduler = SequentialLR(
-            optimizer=optimizer,
-            schedulers=[
-                warmup_scheduler,
-                scheduler,
-            ],
-            milestones=[warmup_epochs],
-        )
-        print(
-            f"Using composite scheduler {composite_scheduler.__class__.__name__}: with schedulers: {[s.__class__.__name__ for s in composite_scheduler._schedulers]}"
-        )
-        return composite_scheduler
-    else:
-        if scheduler:
-            print(f"Using scheduler {scheduler.__class__.__name__}")
-        else:
-            print("No scheduler specified, using scheduler: None")
-        return scheduler
-
-
-def create_scheduler_and_attach_to_optimizer2(
-    optimizer: torch.optim.Optimizer,
-    args: TrainConfig,
     state_dict: dict[str, Any] | None = None,
 ):
     warmup_epochs = None
@@ -622,34 +528,55 @@ def get_unfrozen_backbone_blocks(args: TrainConfig):
         return 0
 
 
-def get_dataloader_transforms(args: TrainConfig):
+def get_dataloader_transforms(train_config: TrainConfig):
 
     # Get default EfficientNet_B0 pre_processing transform
     default_weights = torchvision.models.EfficientNet_B0_Weights.DEFAULT
     test_transform = default_weights.transforms()
 
+    if train_config.image_size_override:
+        image_size = train_config.image_size_override
+        resize_size = round(image_size * 8 / 7)
+        test_transform = transforms.Compose(
+            [
+                transforms.Resize(
+                    resize_size,
+                    interpolation=transforms.InterpolationMode.BICUBIC,
+                ),
+                transforms.CenterCrop(image_size),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=default_weights.transforms().mean,
+                    std=default_weights.transforms().std,
+                ),
+            ]
+        )
+        print(
+            f"Using custom test dataloader transform for image_size_override:{train_config.image_size_override}: {test_transform}"
+        )
+
     # If custom augmentation is enabled, but gpu augmentation is not
     # Use the custom cpu augmentation pipeline
-    if args.augmentation_config and not args.enable_gpu_augmentation:
+    if train_config.augmentation_config and not train_config.enable_gpu_augmentation:
         # Get the specified augmentation pipeline configuration
         try:
             augmentation_pipeline = B0_AUGMENTATION_EXPERIMENTS[
-                args.augmentation_config
+                train_config.augmentation_config
             ].cpu
         except KeyError as e:
             raise ValueError(
-                f"Augmentation experiment: {args.augmentation_config} does not exist. {str(e)}"
+                f"Augmentation experiment: {train_config.augmentation_config} does not exist. {str(e)}"
             )
 
         train_transform = augmentation_pipeline
         print(
-            f"augmentation_config: {args.augmentation_config} "
-            f"enable_gpu_augmentation: {args.enable_gpu_augmentation} "
+            f"augmentation_config: {train_config.augmentation_config} "
+            f"enable_gpu_augmentation: {train_config.enable_gpu_augmentation} "
             f"- Using custom CPU augmentation pipeline: {train_transform}"
         )
     # Else if custom augmentation is enabled, and GPU-based augmentaiton is enabled
-    elif args.augmentation_config and args.enable_gpu_augmentation:
-        if args.enable_ram_loaded_images:
+    elif train_config.augmentation_config and train_config.enable_gpu_augmentation:
+        if train_config.enable_ram_loaded_images:
             # When loading images from ram, any necessary transform will be done during that
             # process, no train transform needed
             train_transform = None
@@ -659,9 +586,9 @@ def get_dataloader_transforms(args: TrainConfig):
             # so images are the same shape for tensor stacking purposes.
             train_transform = RAW_TRANSFORM
         print(
-            f"augmentation_config: {args.augmentation_config} "
-            f"enable_gpu_agumentation: {args.enable_gpu_augmentation} "
-            f"enable_ram_loaded_images: {args.enable_ram_loaded_images} "
+            f"augmentation_config: {train_config.augmentation_config} "
+            f"enable_gpu_agumentation: {train_config.enable_gpu_augmentation} "
+            f"enable_ram_loaded_images: {train_config.enable_ram_loaded_images} "
             f"- Using default RAW_TRANFORM: {train_transform}"
         )
     else:
@@ -669,9 +596,9 @@ def get_dataloader_transforms(args: TrainConfig):
         # [TODO]: this is coupling to efficientnet B0- update this to be more flexible
         train_transform = test_transform
         print(
-            f"augmentation_config: {args.augmentation_config} "
-            f"enable_gpu_agumentation: {args.enable_gpu_augmentation} "
-            f"- Using default EfficientNetB0 Transform: {train_transform}"
+            f"augmentation_config: {train_config.augmentation_config} "
+            f"enable_gpu_agumentation: {train_config.enable_gpu_augmentation} "
+            f"- No custom augmentation enabled, train dataloader will use same as test: {train_transform}"
         )
 
     return train_transform, test_transform
