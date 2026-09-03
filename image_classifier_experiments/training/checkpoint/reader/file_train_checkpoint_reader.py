@@ -4,12 +4,12 @@ from typing import Any
 import torch
 
 from image_classifier_experiments.training.checkpoint.types.training_checkpoint import (
-    TrainingCheckpointMetadataSchema,
-)
-from image_classifier_experiments.training.checkpoint.types.training_checkpoint_data import (
     BestEpochCheckpoint,
     TrainCheckpoint,
     TrainCheckpointMetadata,
+)
+from image_classifier_experiments.training.checkpoint.types.training_checkpoint_schema import (
+    TrainingCheckpointMetadataSchema,
 )
 
 

@@ -1,18 +1,27 @@
+from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel
+
+@dataclass
+class TrainCheckpoint:
+    model_state_dict: dict[str, Any]
+    optimizer_state_dict: dict[str, Any]
+    scheduler_state_dict: dict[str, Any]
+    metadata: TrainCheckpointMetadata
 
 
-class BestEpochCheckpointSchema(BaseModel):
+@dataclass
+class BestEpochCheckpoint:
     epoch: int
     test_loss: float
     test_acc: float
     state_dict: dict[str, Any]
 
 
-class TrainingCheckpointMetadataSchema(BaseModel):
+@dataclass
+class TrainCheckpointMetadata:
     history: dict[str, Any]
     last_epoch: int
     scheduled_epochs: int
     epochs_without_improvement: int
-    best_epoch_checkpoint: BestEpochCheckpointSchema
+    best_epoch_checkpoint: BestEpochCheckpoint

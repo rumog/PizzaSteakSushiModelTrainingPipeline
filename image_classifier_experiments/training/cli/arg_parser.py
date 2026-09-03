@@ -1,7 +1,9 @@
 import argparse
 import sys
 
-from image_classifier_experiments.training.train_config import TrainConfig
+from image_classifier_experiments.training.config.train_config import (
+    TrainConfig,
+)
 
 
 # Currently the file and s3 saving locations are hard coded

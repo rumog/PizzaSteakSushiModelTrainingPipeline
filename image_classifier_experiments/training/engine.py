@@ -13,10 +13,10 @@ from tqdm import tqdm
 
 import wandb
 from image_classifier_experiments.training.checkpoint.types.training_checkpoint import (
-    TrainingCheckpointMetadataSchema,
-)
-from image_classifier_experiments.training.checkpoint.types.training_checkpoint_data import (
     TrainCheckpoint,
+)
+from image_classifier_experiments.training.checkpoint.types.training_checkpoint_schema import (
+    TrainingCheckpointMetadataSchema,
 )
 
 CHECKPOINT_DIR = "checkpoint"

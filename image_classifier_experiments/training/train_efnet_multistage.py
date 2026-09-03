@@ -43,14 +43,16 @@ from image_classifier_experiments.model_build.types.model_checkpoint import (
     ModelMetadataSchema,
 )
 from image_classifier_experiments.training import engine
-from image_classifier_experiments.training.arg_parser import parse_train_args
-from image_classifier_experiments.training.checkpoint.file_train_checkpoint_reader import (
+from image_classifier_experiments.training.checkpoint.reader.file_train_checkpoint_reader import (
     TrainingCheckpointFileReader,
 )
-from image_classifier_experiments.training.checkpoint.types.training_checkpoint_data import (
+from image_classifier_experiments.training.checkpoint.types.training_checkpoint import (
     TrainCheckpoint,
 )
-from image_classifier_experiments.training.train_config import TrainConfig
+from image_classifier_experiments.training.cli.arg_parser import parse_train_args
+from image_classifier_experiments.training.config.train_config import (
+    TrainConfig,
+)
 from image_classifier_experiments.utils.helper_functions import (
     accuracy_fn,
     matches_state_dict,
