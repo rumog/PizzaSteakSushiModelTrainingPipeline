@@ -185,7 +185,7 @@ def parse_train_args():  # -> TrainConfig:
     )
 
     parser.add_argument(
-        "--wandb_run_name",
+        "--wandb_run_id",
         type=str,
     )
 

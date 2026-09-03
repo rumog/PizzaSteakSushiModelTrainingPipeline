@@ -93,6 +93,8 @@ IMAGE_SIZE = (224, 224)
 CACHED_FEATURES_TRAIN_PATH = "model/cached_features/train.pt"
 CACHED_FEATURES_TEST_PATH = "model/cached_features/test.pt"
 ENABLE_UNFROZEN_BACKBONE_TRAINING = True
+# add train_config propery for this
+WANDB_DEFAULT_PROJECT = "wandb_integration_testing"
 
 torch.manual_seed(42)
 torch.mps.manual_seed(42)
@@ -109,9 +111,20 @@ def run_training():
     args = parse_train_args()
 
     train_config = create_train_config(args)
-    print(
-        f"Starting training run: {train_config.run_name} with Training Config:\n{train_config}\n"
-    )
+
+    # If no run_name specified, generate one and inject to config
+    if not train_config.run_name:
+        train_config.run_name = generate_run_name()
+
+    if train_config.enable_wandb:
+        if not train_config.resume_training_checkpoint:
+            # This is a new run, init wandb and log run_id to train_config
+            run_id = init_wandb(train_config)
+            train_config.wandb_run_id = run_id
+        else:
+            # Resuming existing run.  Config validation ensures a
+            # run id is present in this case
+            resume_wandb_run(train_config.wandb_run_id)
 
     # [TODO] "Validate" checkpoint against training config
     # For example, if the model has 2 stages of unfrozen backbone layers, but
@@ -120,10 +133,13 @@ def run_training():
 
     # Create run directory. Used to save training config
     # and training checkpoints for the run.
-    run_dir = create_run_directory(train_config.run_name)
+    run_name = train_config.run_name or generate_run_name()
+    run_dir = create_run_directory(run_name)
     save_training_config(train_config, run_dir)
-    # args.to_yaml("config_dump_test_something_else.yaml")
-    # args2 = TrainConfig.from_yaml("config_dump_test.yaml")
+
+    print(
+        f"Starting training run: {train_config.run_name} with Training Config:\n{train_config}\n"
+    )
 
     resume_checkpoint = None
     # Load training checkpoint for resume if specified
@@ -134,9 +150,6 @@ def run_training():
         # print_checkpoint_values(resume_checkpoint)
     else:
         print("No resume checkpoint specified, starting new training session")
-
-    if train_config.enable_wandb:
-        init_wandb(train_config)
 
     device = get_device()
 
@@ -720,7 +733,7 @@ def get_optimizer(
 
 
 def save_training_config(config: TrainConfig, save_dir: str | Path):
-    save_file = f"{Path(save_dir).name}_train_config.yaml"
+    save_file = "train_config.yaml"
     config_save_path = Path(save_dir) / save_file
 
     print(f"Saving test config to project run folder at: {config_save_path}")
@@ -729,10 +742,13 @@ def save_training_config(config: TrainConfig, save_dir: str | Path):
     config_save_path.write_text(config_string_yaml, encoding="utf-8")
 
 
-def create_run_directory(run_name: str) -> Path:
+def generate_run_name():
     timestamp = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y%m%d_%H%M%S")
-    run_dir = run_name or f"run_{timestamp}"
-    run_dir_path = Path(TRAINING_RUNS_DIR) / run_dir
+    return f"run_{timestamp}"
+
+
+def create_run_directory(run_name: str) -> Path:
+    run_dir_path = Path(TRAINING_RUNS_DIR) / run_name
 
     run_dir_path.mkdir(parents=True, exist_ok=True)
     return run_dir_path
@@ -759,6 +775,20 @@ def create_train_config(args) -> TrainConfig:
                 f"Injecting resume_training_checkpoint override '{args.resume_training_checkpoint}' into test config."
             )
             config.resume_training_checkpoint = args.resume_training_checkpoint
+
+        # Ensure if wandb_run_id is present, a training checkpoint to resume is also specified.
+        # Because the wandb run id is saved to training config on the first run (e.g. when
+        # no resume_training_checkpoint is provided or saved in the convig), and because
+        # --resume_training_checkpoint can be overridden from command line, the validation
+        # is deferred until after the TrainConfig is constructed.
+        if config.enable_wandb and (
+            bool(config.wandb_run_id) != bool(config.resume_training_checkpoint)
+        ):
+            raise ValueError(
+                "When enabling wandb logging you must either 1. Be starting a clean run (no wandb_run_id or resume_training_checkpoint "
+                "specified) or 2. Be resuming an existing checkpoint (resume_training_checkpoint) which requires supplying the wandb_run_id"
+            )
+
         return config
     else:
         print("Creating training config from cli args.")
@@ -884,12 +914,6 @@ def get_device():
         return "cpu"
 
 
-def generate_wandb_run_name(prefix: str | None = None):
-    timestamp = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y%m%d_%H%M%S")
-    run_prefix = prefix if prefix else "run_efnet_bo_transfer_"
-    return run_prefix + f"_{timestamp}"
-
-
 def write_wandb_summary(train_time, results: dict[str, Any], args: TrainConfig):
     if wandb.run is not None:
         wandb.summary["train_time_seconds"] = train_time
@@ -941,13 +965,27 @@ def verify_resume_checkpoint_state_dicts_loaded_successfully(
     )
 
 
-def init_wandb(args: TrainConfig):
-    run_name = generate_wandb_run_name(args.wandb_run_name)
-    wandb.init(
-        project="general_exporation",
+def init_wandb(train_config: TrainConfig):
+    run_name = train_config.run_name
+    run = wandb.init(
+        project=WANDB_DEFAULT_PROJECT,
         name=run_name,
-        config=vars(args),
+        config=vars(train_config),
     )
+    # according to documentation while the id is already implicity saved with run metadata
+    # this makes runs more easily search and comparable by id
+    wandb.config.update({"run_id": run.id})
+    print(f"Successfully initialized new wandb run:{run_name} with id: {run.id}")
+    return run.id
+
+
+def resume_wandb_run(run_id: str):
+    wandb.init(
+        project=WANDB_DEFAULT_PROJECT,
+        id=run_id,
+        resume="must",
+    )
+    print(f"Successfully resumed wandb run for run_id: {run_id}")
 
 
 if __name__ == "__main__":

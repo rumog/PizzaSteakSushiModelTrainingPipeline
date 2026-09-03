@@ -127,7 +127,6 @@ def save_training_checkpoint_artifact(
 
     # validate checkpoint metadata expected schema and
     # save dump from schema object to ensure consistent save structure
-    print("Validating checkpoint metadata schema...")
     checkpoint_metadata_schema = TrainingCheckpointMetadataSchema.model_validate(
         train_metadata
     )
@@ -141,10 +140,15 @@ def save_training_checkpoint_artifact(
         # - what happens to a wb run?  If you name it the same will it just resume? if so wb config
     }
 
+    # write to temp save path then swap so most recent checkpoint won't get corrupted if
+    # interrupted during a save
+    temp_save_path = checkpoint_save_path.with_suffix(".tmp")
+
     torch.save(
         obj=training_checkpoint,
-        f=checkpoint_save_path,
+        f=temp_save_path,
     )
+    temp_save_path.replace(checkpoint_save_path)
 
 
 def train_step(
@@ -407,7 +411,7 @@ def train_model(
                 "test/accuracy": test_acc,
             }
             metrics.update(get_optimizer_group_metrics(optimizer))
-            wandb.log(metrics, step=epoch + 1)
+            wandb.log(metrics)
 
         # Accuracy will be our measure for best- so "best[metric]" here really
         # means- [metric] associated with best accuracy. Want to make this clear
@@ -459,10 +463,6 @@ def train_model(
             "test_loss": best_test_loss,
             "state_dict": best_state_dict,
         }
-        best_checkpoint_check = {
-            k: v for k, v in best_checkpoint.items() if k != "state_dict"
-        }
-        print(f"\nBest Checpoint before saving: {best_checkpoint_check}")
 
         save_training_checkpoint_artifact(
             model=train_model,

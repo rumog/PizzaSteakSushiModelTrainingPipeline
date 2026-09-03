@@ -58,7 +58,7 @@ class TrainConfig:
     s3_bucket: str | None = None
     s3_key_prefix: str | None = None
     enable_wandb: bool = False
-    wandb_run_name: str | None = None
+    wandb_run_id: str | None = None
 
     def __post_init__(self):
         self.validate_args()
@@ -108,8 +108,17 @@ class TrainConfig:
                 "Invalid Training Args: If 'save' is S3, both s3_bucket and s3_key_prefix Must be set"
             )
 
-        if self.wandb_run_name and not self.enable_wandb:
-            raise ValueError("wandb_run_name cannot be set without enable_wandb.")
+        if self.wandb_run_id and not self.enable_wandb:
+            raise ValueError(
+                "wandb_run_id cannot be specified unless enable_wandb is set."
+            )
+
+        if (
+            self.resume_training_checkpoint and self.enable_wandb
+        ) and not self.wandb_run_id:
+            raise ValueError(
+                "If resuming training from checkpoint and enable_wandb is specified, wandb_run_id MUST be supplied"
+            )
 
     def validate_load_artifact_config(self):
         if self.load_artifact_from == "s3" and (
@@ -260,12 +269,40 @@ class TrainConfig:
         return cls(**data)
 
     def to_yaml(self, path: str | Path, include_nulls: bool = False) -> None:
+        import io
 
-        return yaml.safe_dump(
-            self.to_dict(include_nulls),
-            sort_keys=False,
-            default_flow_style=None,
+        stream = io.StringIO()
+
+        # Workaround for using flow_style True for tuples and lists and False for everything else
+        # Before used "None" because the formatting for lists (esp nested lists/tuples) is nicer
+        # for this use case.  However doing that causes two completely different formats when
+        # lists are present vs not (curly brackets, all on one line), but prints as expected
+        # when those arguments aren't present.  This forces a consistent layout while still keeping
+        # the desired formatting choices when lists are present
+        class MixedLayoutDumper(yaml.SafeDumper):
+            pass
+
+        MixedLayoutDumper.add_representer(
+            list,
+            lambda dumper, data: dumper.represent_sequence(
+                "tag:yaml.org,2002:seq", data, flow_style=True
+            ),
         )
+        MixedLayoutDumper.add_representer(
+            tuple,
+            lambda dumper, data: dumper.represent_sequence(
+                "tag:yaml.org,2002:seq", data, flow_style=True
+            ),
+        )
+
+        yaml.dump(
+            self.to_dict(include_nulls),
+            stream,
+            Dumper=MixedLayoutDumper,
+            sort_keys=False,
+            default_flow_style=False,
+        )
+        return stream.getvalue()
 
     @classmethod
     def from_yaml(cls, yaml_string: str) -> TrainConfig:
