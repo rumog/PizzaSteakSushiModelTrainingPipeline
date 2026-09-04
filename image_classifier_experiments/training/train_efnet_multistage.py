@@ -269,16 +269,16 @@ def run_training():
         end_time = timer()
         train_time = print_train_time(start_time, end_time, device)
         write_wandb_summary(train_time, results, train_config)
+
+        print(f"train_model output: {redact_dict(results)}")
+
+        # Save training artifaacts if requested
+        save_training_artifacts(
+            model=model_0, results=results, class_list=class_list, args=train_config
+        )
     finally:
         if wandb.run is not None:
             wandb.finish()
-
-    print(f"train_model output: {redact_dict(results)}")
-
-    # Save training artifaacts if requested
-    save_training_artifacts(
-        model=model_0, results=results, class_list=class_list, args=train_config
-    )
 
     # plot_loss_curves(results["history"])
 
