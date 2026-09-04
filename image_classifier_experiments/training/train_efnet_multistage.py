@@ -807,7 +807,7 @@ def save_training_artifacts(
         timestamp = datetime.now(ZoneInfo("America/Los_Angeles")).strftime(
             "%Y%m%d_%H%M%S"
         )
-        filename = f"{model_architecture_name}_ep{results['best_checkpoint']['epoch']}_{timestamp}_v{version}_test_schema_backing.pth"
+        filename = f"{model_architecture_name}_ep{results['best_checkpoint']['epoch']}_{timestamp}_v{version}.pth"
 
         # validate model metadata matches expected schema and
         # save dump from schema object to ensure consistent save
