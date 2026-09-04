@@ -781,9 +781,14 @@ def save_training_artifacts(
     # Save model if requested
     if args.save is not None:
         model_architecture_name = model.__class__.__name__
-
         model_architecture = {"name": model_architecture_name, "weights": "DEFAULT"}
-        model_preprocessing = {"image_size": IMAGE_SIZE}
+
+        image_size = (
+            (args.image_size_override, args.image_size_override)
+            if args.image_size_override
+            else IMAGE_SIZE
+        )
+        model_preprocessing = {"image_size": image_size}
 
         # NOTE:
         # Currently using the course train/test split.
