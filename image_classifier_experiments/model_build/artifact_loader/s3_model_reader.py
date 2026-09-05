@@ -30,7 +30,9 @@ class ModelArtifactS3Reader:  # Model storage format keys
     def __init__(self):
         self.s3 = boto3.client("s3")
 
-    def load_model_artifact(self, model_bucket, model_key) -> ModelArtifactData:
+    def load_model_artifact(
+        self, model_bucket: str, model_key: str
+    ) -> ModelArtifactData:
         print(f"Retrieving model artifact {model_bucket}/{model_key} from S3...")
         try:
             response = self.s3.get_object(Bucket=model_bucket, Key=model_key)

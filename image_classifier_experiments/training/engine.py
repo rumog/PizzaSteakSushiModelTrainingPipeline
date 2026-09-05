@@ -199,13 +199,16 @@ def train_step(
         loss = loss_fn(y_logits, y_batch)
         acc = accuracy_fn(y_true=y_batch, y_pred=y_logits.argmax(dim=1))
 
-        # keeps only the value, not the whole tensor (which is attached to device, grad info, etc).  Earlier
+        # detach() keeps only the value, not the whole tensor (which is attached to device, grad info, etc).  Earlier
         # tutorial notebooks omitted this, but now we're using it.  You'll see if you avoid this step you can
         # run into issues tying to do things like plot the result as matplotlib will complain that it can't use cuda/mps
         # tensors etc.  Doing this just makes processing results easier so you don't have to convert later every time
         # something doesn't want a torch tensor.
-        train_loss += loss.detach()
-        train_acc += acc.detach()
+
+        # metrics are sample weighted to represent the true mean loss and accuracy
+        # across all samples, even when batch sizes aren't uniform.
+        train_loss += loss.detach() * y_batch.size(0)
+        train_acc += acc.detach() * y_batch.size(0)
 
         # 3. Zero gradient
         optimizer.zero_grad()
@@ -217,8 +220,8 @@ def train_step(
         optimizer.step()
 
     # Calculate results: the avg train loss and accuracy metric per batch
-    train_loss = (train_loss / len(dataloader)).item()
-    train_acc = (train_acc / len(dataloader)).item()
+    train_loss = (train_loss / len(dataloader.dataset)).item()
+    train_acc = (train_acc / len(dataloader.dataset)).item()
     return train_loss, train_acc
     # print(f"\nTrain Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f}")
 
@@ -260,12 +263,12 @@ def test_step(
         loss = loss_fn(y_logits, y_batch)
         acc = accuracy_fn(y_true=y_batch, y_pred=y_logits.argmax(dim=1))
 
-        test_loss += loss.detach()
-        test_acc += acc.detach()
+        test_loss += loss.detach() * y_batch.size(0)
+        test_acc += acc.detach() * y_batch.size(0)
 
     # Calculate results: the avg test loss and accuracy metric per batch
-    test_loss = (test_loss / len(dataloader)).item()
-    test_acc = (test_acc / len(dataloader)).item()
+    test_loss = (test_loss / len(dataloader.dataset)).item()
+    test_acc = (test_acc / len(dataloader.dataset)).item()
     return test_loss, test_acc
 
 

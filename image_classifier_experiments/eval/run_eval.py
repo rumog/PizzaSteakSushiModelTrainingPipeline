@@ -7,12 +7,20 @@ import pandas as pd
 import torch
 import torchvision
 from mlxtend.plotting import plot_confusion_matrix
+from torch import nn
 from torchmetrics import ConfusionMatrix
+from torchvision import transforms
 
 from image_classifier_experiments.data_setup import data_setup
 from image_classifier_experiments.eval.eval import make_predictions
+from image_classifier_experiments.model_build.artifact_loader.s3_model_reader import (
+    ModelArtifactS3Reader,
+)
 from image_classifier_experiments.model_build.efficientnet_b0_transfer import (
     EfficientNetB0TransferLearningModel,
+)
+from image_classifier_experiments.model_build.types.model_artifact_data import (
+    ModelArtifactData,
 )
 
 DATA_PATH_PARENT_DIR = "data"
@@ -20,7 +28,9 @@ IMAGE_PATH_PARENT_DIR = "seattlement_birds_50_100_percent"
 MODEL_SAVE_DIR = "model"
 
 
-def log_and_display_confusion_matrix(model_artifact=str, device: str = "cpu"):
+def log_and_display_confusion_matrix(
+    artifact_name: str, model_artifact=ModelArtifactData, device: str = "cpu"
+):
     data_path = Path(DATA_PATH_PARENT_DIR)
     image_path = data_path / IMAGE_PATH_PARENT_DIR
     train_dir = image_path / "train"
@@ -30,13 +40,32 @@ def log_and_display_confusion_matrix(model_artifact=str, device: str = "cpu"):
     default_weights = torchvision.models.EfficientNet_B0_Weights.DEFAULT
     transform = default_weights.transforms()
 
+    if model_artifact.model_metadata.preprocessing.image_size is not None:
+        image_size = model_artifact.model_metadata.preprocessing.image_size
+        resize_size = tuple(round(dim * 8 / 7) for dim in image_size)
+        transform = transforms.Compose(
+            [
+                transforms.Resize(
+                    resize_size,
+                    interpolation=transforms.InterpolationMode.BICUBIC,
+                ),
+                transforms.CenterCrop(image_size),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=default_weights.transforms().mean,
+                    std=default_weights.transforms().std,
+                ),
+            ]
+        )
+    print(f"Using dataloader transform: {transform}")
+
     _, test_dataloader, class_list = data_setup.create_image_folder_dataloaders(
         train_dir,
         test_dir,
         transform,
         transform,
         batch_size=64,
-        num_workers=os.cpu_count() - 2,
+        num_workers=os.cpu_count() - 1,
         shuffle_train=True,
     )
     # Create model instance
@@ -87,7 +116,11 @@ def log_and_display_confusion_matrix(model_artifact=str, device: str = "cpu"):
     plt.tight_layout()
 
     # Save a crisp high-res image to view cleanly in VS Code
-    fig.savefig("eval_logging/confusion_matrix_fixed.png", dpi=300, bbox_inches="tight")
+    fig.savefig(
+        f"eval_logging/confusion_matrix_{artifact_name}.png",
+        dpi=300,
+        bbox_inches="tight",
+    )
     print("Saved clean, high-resolution confusion matrix to confusion_matrix_fixed.png")
 
     # save to csv
@@ -95,14 +128,21 @@ def log_and_display_confusion_matrix(model_artifact=str, device: str = "cpu"):
     df_cm = pd.DataFrame(confmat_tensor.numpy(), index=class_list, columns=class_list)
 
     # Save to your data subdirectory
-    csv_path = Path("eval_logging/confusion_matrix.csv")
+    csv_path = Path(f"eval_logging/confusion_matrix_{artifact_name}.csv")
     df_cm.to_csv(csv_path)
     print(f"Raw matrix text saved to {csv_path}")
 
 
 if __name__ == "__main__":
     # mp.set_start_method("fork", force=True)
+    model_bucket = "seattlemet-birds-classifier-models-613693331461-us-west-2-an"
+    model_key = "seattlemet_birds_classifier/0.0.0/EfficientNetB0TransferLearningModel_ep37_20260904_181027_v0.0.pth"
+    model_loader = ModelArtifactS3Reader()
+    model_artifact = model_loader.load_model_artifact(
+        model_bucket=model_bucket, model_key=model_key
+    )
     log_and_display_confusion_matrix(
-        model_artifact="EfficientNetB0TransferLearningModel_ep90_20260821_195405_v0.0.pth",
+        artifact_name=model_key.rsplit("/", 1)[-1],
+        model_artifact=model_artifact,
         device="mps",
     )
