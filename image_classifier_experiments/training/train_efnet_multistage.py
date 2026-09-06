@@ -819,6 +819,7 @@ def get_gpu_transform(args: TrainConfig, default_weights):
 def save_training_artifacts(
     model: nn.Module, results: dict[str, Any], class_list: list[str], args: TrainConfig
 ):
+    print(f"DEBUG CHECK: origin_weights enum name: {model.origin_weights.name}")
     # Save model if requested
     if args.save is not None:
         model_name = model.__class__.__name__
