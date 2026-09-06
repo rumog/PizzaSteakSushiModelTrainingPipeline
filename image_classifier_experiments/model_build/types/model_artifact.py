@@ -11,7 +11,8 @@ class ModelArtifactData:
 @dataclass
 class ModelArchitecture:
     name: str
-    weights: str | None
+    backbone: str | None = None
+    weights: str | None = None
 
 
 @dataclass
@@ -31,4 +32,4 @@ class ModelMetadata:
     class_list: list[str]
     architecture: ModelArchitecture
     preprocessing: ModelPreprocessing
-    training: ModelTrainingInfo | None
+    training: ModelTrainingInfo | None = None

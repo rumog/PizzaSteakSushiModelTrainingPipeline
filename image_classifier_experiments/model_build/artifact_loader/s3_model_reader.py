@@ -10,14 +10,14 @@ from botocore.exceptions import (
     ParamValidationError,
 )
 
-from image_classifier_experiments.model_build.types.model_artifact_data import (
+from image_classifier_experiments.model_build.types.model_artifact import (
     ModelArchitecture,
     ModelArtifactData,
     ModelMetadata,
     ModelPreprocessing,
     ModelTrainingInfo,
 )
-from image_classifier_experiments.model_build.types.model_checkpoint import (
+from image_classifier_experiments.model_build.types.model_artifact_schema import (
     ModelMetadataSchema,
 )
 
@@ -78,6 +78,7 @@ class ModelArtifactS3Reader:  # Model storage format keys
         )
 
         model_architecture = ModelArchitecture(
+            backbone=model_metadata_schema.architecture.backbone,
             name=model_metadata_schema.architecture.name,
             weights=model_metadata_schema.architecture.weights,
         )

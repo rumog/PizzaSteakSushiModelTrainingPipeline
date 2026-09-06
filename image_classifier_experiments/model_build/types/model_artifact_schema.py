@@ -3,7 +3,10 @@ from pydantic import BaseModel
 
 class ModelArchitectureSchema(BaseModel):
     name: str
-    weights: str | None
+    # This should be required when schema is finalized
+    # allowing None for now for backwards compatibility
+    backbone: str | None = None
+    weights: str | None = None
 
 
 class ModelPreprocessingSchema(BaseModel):

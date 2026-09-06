@@ -19,7 +19,7 @@ from image_classifier_experiments.model_build.artifact_loader.s3_model_reader im
 from image_classifier_experiments.model_build.efficientnet_b0_transfer import (
     EfficientNetB0TransferLearningModel,
 )
-from image_classifier_experiments.model_build.types.model_artifact_data import (
+from image_classifier_experiments.model_build.types.model_artifact import (
     ModelArtifactData,
 )
 

@@ -13,6 +13,7 @@ import yaml
 class TrainConfig:
     run_name: str | None = None
     resume_training_checkpoint: str | None = None
+    model_architecture: str | None = None
     load_artifact_from: Literal["file", "s3"] | None = None
     artifact_s3_bucket: str | None = None
     artifact_file_path: str | None = None

@@ -21,6 +21,7 @@ from torchvision import transforms
 
 import wandb
 from image_classifier_experiments.augmentation.augmentation_experiments import (
+    AUGMENTATION_EXPERIMENTS,
     B0_AUGMENTATION_EXPERIMENTS,
 )
 from image_classifier_experiments.data_setup import data_setup
@@ -33,10 +34,14 @@ from image_classifier_experiments.model_build.artifact_loader.s3_model_reader im
 from image_classifier_experiments.model_build.efficientnet_b0_transfer import (
     EfficientNetB0TransferLearningModel,
 )
-from image_classifier_experiments.model_build.types.model_artifact_data import (
+from image_classifier_experiments.model_build.efficientnet_transfer import (
+    EfficientNetTransferLearningModel,
+)
+from image_classifier_experiments.model_build.model_factory import BackboneFactory
+from image_classifier_experiments.model_build.types.model_artifact import (
     ModelArtifactData,
 )
-from image_classifier_experiments.model_build.types.model_checkpoint import (
+from image_classifier_experiments.model_build.types.model_artifact_schema import (
     ModelMetadataSchema,
 )
 from image_classifier_experiments.training import engine
@@ -63,7 +68,6 @@ from image_classifier_experiments.utils.helper_functions import (
 # S3_MODEL_BUCKET = "pss-classifier-models-613693331461-us-west-2-an"
 # MODEL_KEY_PREFIX = "pss-classifier/0.1.0"
 
-DEFAULT_WEIGHTS = torchvision.models.EfficientNet_B0_Weights.DEFAULT
 
 # This is needed currently for the GPU-based augmentation scenario
 # when loading images to ram is disabled. Currently in this scneario
@@ -88,11 +92,11 @@ DATA_PATH_PARENT_DIR = "data/"
 TRAINING_RUNS_DIR = "runs/"
 IMAGE_PATH_PARENT_DIR = "seattlement_birds_50_100_percent"
 MODEL_SAVE_DIR = "model"
-IMAGE_SIZE = (224, 224)
+IMAGE_SIZE = 224
 CACHED_FEATURES_TRAIN_PATH = "model/cached_features/train.pt"
 CACHED_FEATURES_TEST_PATH = "model/cached_features/test.pt"
-ENABLE_UNFROZEN_BACKBONE_TRAINING = True
-
+DEFAULT_MODEL_ARCHITECTURE = "efficientnet_b0"
+DEFAULT_WEIGHTS = torchvision.models.EfficientNet_B0_Weights.DEFAULT
 
 torch.manual_seed(42)
 torch.mps.manual_seed(42)
@@ -151,8 +155,16 @@ def run_training():
 
     device = get_device()
 
+    # construct backbone and use weights to construct dataloader transforms
+    backbone_architecture = (
+        train_config.model_architecture or DEFAULT_MODEL_ARCHITECTURE
+    )
+    backbone, origin_weights = BackboneFactory.build_backbone(backbone_architecture)
+
     # Create train and test transforms used in image dataloader creation
-    train_transform, test_transform = get_dataloader_transforms(train_config)
+    train_transform, test_transform = get_dataloader_transforms(
+        train_config, origin_weights
+    )
 
     # Create image dataloaders
     train_image_dataloader, test_image_dataloader, class_list = get_image_dataloaders(
@@ -177,7 +189,19 @@ def run_training():
         model_artifact = load_model_artifact(train_config)
 
     # Create the model
+    """
     model_0 = EfficientNetB0TransferLearningModel(
+        num_classes=len(class_list),
+        from_artifact=model_artifact,
+        unfrozen_backbone_blocks=get_unfrozen_backbone_blocks(train_config),
+        dropout_override=train_config.classifier_dropout,
+    ).to(device)
+    """
+
+    model_0 = EfficientNetTransferLearningModel(
+        backbone_arch=backbone_architecture,
+        backbone=backbone,
+        origin_weights=origin_weights,
         num_classes=len(class_list),
         from_artifact=model_artifact,
         unfrozen_backbone_blocks=get_unfrozen_backbone_blocks(train_config),
@@ -244,7 +268,7 @@ def run_training():
         )
 
     # Get GPU-based transform if required, otherwise will be None
-    gpu_transform = get_gpu_transform(train_config)
+    gpu_transform = get_gpu_transform(train_config, origin_weights)
 
     try:
         start_time = timer()
@@ -528,13 +552,20 @@ def get_unfrozen_backbone_blocks(args: TrainConfig):
         return 0
 
 
-def get_dataloader_transforms(train_config: TrainConfig):
+def get_dataloader_transforms(train_config: TrainConfig, default_weights):
 
-    # Get default EfficientNet_B0 pre_processing transform
-    default_weights = torchvision.models.EfficientNet_B0_Weights.DEFAULT
-    test_transform = default_weights.transforms()
+    # Get default pre_processing transform
+    weights = default_weights or DEFAULT_WEIGHTS
+    test_transform = weights.transforms()
+
+    print(type(weights))
+    crop_size = test_transform.crop_size
+    image_size = crop_size[0] if isinstance(crop_size, (list, tuple)) else crop_size
 
     if train_config.image_size_override:
+        print(
+            f"Using custom base transform due to image_size_override: {train_config.image_size_override}"
+        )
         image_size = train_config.image_size_override
         resize_size = round(image_size * 8 / 7)
         test_transform = transforms.Compose(
@@ -546,23 +577,21 @@ def get_dataloader_transforms(train_config: TrainConfig):
                 transforms.CenterCrop(image_size),
                 transforms.ToTensor(),
                 transforms.Normalize(
-                    mean=default_weights.transforms().mean,
-                    std=default_weights.transforms().std,
+                    mean=weights.transforms().mean,
+                    std=weights.transforms().std,
                 ),
             ]
         )
-        print(
-            f"Using custom test dataloader transform for image_size_override:{train_config.image_size_override}: {test_transform}"
-        )
+    print(f"Using test dataloader transform: {test_transform}")
 
     # If custom augmentation is enabled, but gpu augmentation is not
     # Use the custom cpu augmentation pipeline
     if train_config.augmentation_config and not train_config.enable_gpu_augmentation:
         # Get the specified augmentation pipeline configuration
         try:
-            augmentation_pipeline = B0_AUGMENTATION_EXPERIMENTS[
+            augmentation_pipeline = AUGMENTATION_EXPERIMENTS[
                 train_config.augmentation_config
-            ].cpu
+            ](weights, image_size).cpu
         except KeyError as e:
             raise ValueError(
                 f"Augmentation experiment: {train_config.augmentation_config} does not exist. {str(e)}"
@@ -584,12 +613,17 @@ def get_dataloader_transforms(train_config: TrainConfig):
             # when not loading images from ram, we currently use a raw transform
             # just to convert the image to tensor, and potentially resize
             # so images are the same shape for tensor stacking purposes.
-            train_transform = RAW_TRANSFORM
+            train_transform = transforms.Compose(
+                [
+                    transforms.Resize((image_size, image_size)),
+                    transforms.PILToTensor(),
+                ]
+            )
         print(
             f"augmentation_config: {train_config.augmentation_config} "
             f"enable_gpu_agumentation: {train_config.enable_gpu_augmentation} "
             f"enable_ram_loaded_images: {train_config.enable_ram_loaded_images} "
-            f"- Using default RAW_TRANFORM: {train_transform}"
+            f"- Using raw transform: {train_transform}"
         )
     else:
         # No custom augmentation is enabled, use standard EfficientNet B0 transform
@@ -747,7 +781,14 @@ def redact_dict(d):
     return new_dict
 
 
-def get_gpu_transform(args: TrainConfig):
+def get_gpu_transform(args: TrainConfig, default_weights):
+    weights = default_weights or DEFAULT_WEIGHTS
+    crop_size = weights.transforms().crop_size
+    image_size = crop_size[0] if isinstance(crop_size, (list, tuple)) else crop_size
+
+    # apply override if present
+    image_size = args.image_size_override or image_size
+
     # args should already be validated to not have invalid combinations
     # but doing some protection here
     if (
@@ -756,9 +797,9 @@ def get_gpu_transform(args: TrainConfig):
         and not args.enable_backbone_caching
     ):
         try:
-            augmentation_pipeline = B0_AUGMENTATION_EXPERIMENTS[
-                args.augmentation_config
-            ].gpu
+            augmentation_pipeline = AUGMENTATION_EXPERIMENTS[args.augmentation_config](
+                default_weights, image_size
+            ).gpu
         except KeyError as e:
             raise ValueError(
                 f"Augmentation experiment: {args.augmentation_config} does not exist. {str(e)}"
@@ -780,14 +821,23 @@ def save_training_artifacts(
 ):
     # Save model if requested
     if args.save is not None:
-        model_architecture_name = model.__class__.__name__
-        model_architecture = {"name": model_architecture_name, "weights": "DEFAULT"}
+        model_name = model.__class__.__name__
+        model_architecture = {
+            "backbone": model.backbone_arch,
+            "name": model_name,
+            "weights": "DEFAULT",
+        }
 
-        image_size = (
-            (args.image_size_override, args.image_size_override)
-            if args.image_size_override
-            else IMAGE_SIZE
-        )
+        # default image size based on origin_weights if exists
+        # or the hard-coded default (should match the default backbone arch)
+        weights = model.origin_weights or DEFAULT_WEIGHTS
+        crop_size = weights.transforms().crop_size
+        image_dim = crop_size[0] if isinstance(crop_size, (list, tuple)) else crop_size
+
+        # update if override is set
+        image_dim = args.image_size_override or image_dim
+        image_size = (image_dim, image_dim)
+
         model_preprocessing = {"image_size": image_size}
 
         # NOTE:
@@ -812,7 +862,7 @@ def save_training_artifacts(
         timestamp = datetime.now(ZoneInfo("America/Los_Angeles")).strftime(
             "%Y%m%d_%H%M%S"
         )
-        filename = f"{model_architecture_name}_ep{results['best_checkpoint']['epoch']}_{timestamp}_v{version}.pth"
+        filename = f"{model_name}_ep{results['best_checkpoint']['epoch']}_arch_{model.backbone_arch}_{timestamp}_v{version}.pth"
 
         # validate model metadata matches expected schema and
         # save dump from schema object to ensure consistent save

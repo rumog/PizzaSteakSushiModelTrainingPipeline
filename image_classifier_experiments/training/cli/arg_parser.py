@@ -27,6 +27,11 @@ def parse_train_args():  # -> TrainConfig:
     )
 
     parser.add_argument(
+        "--model_architecture",
+        type=str,
+    )
+
+    parser.add_argument(
         "--load_artifact_from",
         choices=["file", "s3"],
     )

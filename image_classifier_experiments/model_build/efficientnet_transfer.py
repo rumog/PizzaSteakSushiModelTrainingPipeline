@@ -10,40 +10,52 @@ from image_classifier_experiments.model_build.types.model_artifact import (
 )
 
 WEIGHTS = torchvision.models.EfficientNet_B0_Weights.DEFAULT
-DEFAULT_CLASSIFIER_DROPOUT = 0.2
 STATE_DICT_KEY = "state_dict"
 
 
-class EfficientNetB0TransferLearningModel(nn.Module):
+class EfficientNetTransferLearningModel(nn.Module):
     def __init__(
         self,
+        backbone_arch: str,
+        backbone: nn.Module,
+        origin_weights,
         num_classes: int,
         from_artifact: ModelArtifactData | None = None,
         unfrozen_backbone_blocks: int = 0,
         dropout_override: float | None = None,
     ):
         super().__init__()
+        self.backbone_arch = backbone_arch
         self.num_classes = num_classes
         self.from_artifact = from_artifact
         self.unfrozen_backbone_blocks = unfrozen_backbone_blocks
-        self.classifier_dropout = (
-            dropout_override
-            if dropout_override is not None
-            else DEFAULT_CLASSIFIER_DROPOUT
-        )
 
         # Create efficient_net_b0 model and initialize with DEFAULT weights
-        weights = torchvision.models.EfficientNet_B0_Weights.DEFAULT
-        self.backbone = torchvision.models.efficientnet_b0(weights=weights)
+        self.origin_weights = origin_weights
+        self.backbone = backbone
+
+        # Before replacing the classifier, get the in_features and dropout
+        # for our custom classifier. Conditional should work for b0-b7
+        # but provide a fallback just in case.
+        self.in_features = next(
+            m.in_features
+            for m in self.backbone.classifier.modules()
+            if isinstance(m, nn.Linear)
+        )
+        native_dropout = next(
+            m.p for m in self.backbone.classifier.modules() if isinstance(m, nn.Dropout)
+        )
+        self.classifier_dropout = dropout_override or native_dropout
 
         # No-op the backbone classifier to effectively nullify it, and replace
-        # with custom classifier
+        # with custom classifier.  Get num of in_features first
+
         self.backbone.classifier = nn.Identity()
 
         self.classifier = nn.Sequential(
             nn.Dropout(p=self.classifier_dropout, inplace=True),
             nn.Linear(
-                in_features=1280,  # same as original
+                in_features=self.in_features,  # same as original
                 out_features=num_classes,
                 bias=True,
             ),
@@ -79,10 +91,6 @@ class EfficientNetB0TransferLearningModel(nn.Module):
             self.backbone.features[-self.unfrozen_backbone_blocks :].requires_grad_(
                 True
             )
-
-    @classmethod
-    def inference_transform(cls):
-        return cls.WEIGHTS.transforms()
 
     def forward(self, X):
         return self.classifier(self.backbone(X))

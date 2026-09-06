@@ -480,33 +480,36 @@ B0_VALIDATION_TRANSFORMS = {
     )
 }
 
-B0_AUGMENTATION_EXPERIMENTS_300 = {
-    # --------
-    # experiment1:
-    # Initial reize 343 on short edge- retains aspect ratio
-    # Random Crop and Horizontal Flip
-    # --------
-    "experiment_1_300": AugmentationConfig(
+
+# --------
+# experiment 1:
+# Initial reize on short edge- retains aspect ratio
+# Random Crop and Horizontal Flip
+# --------
+def experiment_1_factory(default_weights, image_size: int) -> AugmentationConfig:
+    validate_factory_args(default_weights, image_size)
+    resize_size = round(image_size * 8 / 7)
+    return AugmentationConfig(
         cpu=transforms.Compose(
             [
-                transforms.Resize(343),
-                transforms.RandomCrop(300),
+                transforms.Resize(resize_size),
+                transforms.RandomCrop(image_size),
                 transforms.RandomHorizontalFlip(p=0.5),
                 transforms.ToTensor(),
                 transforms.Normalize(
-                    mean=B0_DEFAULT_WEIGHTS.transforms().mean,
-                    std=B0_DEFAULT_WEIGHTS.transforms().std,
+                    mean=default_weights.transforms().mean,
+                    std=default_weights.transforms().std,
                 ),
             ]
         ),
         gpu=transforms_v2.Compose(
             [
                 transforms_v2.Resize(
-                    343,
+                    resize_size,
                     antialias=True,
                 ),
                 transforms_v2.RandomCrop(
-                    300,
+                    image_size,
                 ),
                 transforms_v2.RandomHorizontalFlip(p=0.5),
                 transforms_v2.ToDtype(
@@ -514,21 +517,25 @@ B0_AUGMENTATION_EXPERIMENTS_300 = {
                     scale=True,
                 ),
                 transforms_v2.Normalize(
-                    mean=B0_DEFAULT_WEIGHTS.transforms().mean,
-                    std=B0_DEFAULT_WEIGHTS.transforms().std,
+                    mean=default_weights.transforms().mean,
+                    std=default_weights.transforms().std,
                 ),
             ]
         ),
-    ),
-    # --------
-    # experiment2:
-    # Random Resize Crop and Horizontal Flip + Color Jitter
-    # --------
-    "experiment_2_300": AugmentationConfig(
+    )
+
+
+# --------
+# experiment 2:
+# Random Resize Crop and Horizontal Flip + Color Jitter
+# --------
+def experiment_2_factory(default_weights, image_size: int) -> AugmentationConfig:
+    validate_factory_args(default_weights, image_size)
+    return AugmentationConfig(
         cpu=transforms.Compose(
             [
                 transforms.RandomResizedCrop(
-                    300,
+                    image_size,
                     scale=(0.8, 1.0),
                 ),
                 transforms.RandomHorizontalFlip(p=0.5),
@@ -540,15 +547,15 @@ B0_AUGMENTATION_EXPERIMENTS_300 = {
                 ),
                 transforms.ToTensor(),
                 transforms.Normalize(
-                    mean=B0_DEFAULT_WEIGHTS.transforms().mean,
-                    std=B0_DEFAULT_WEIGHTS.transforms().std,
+                    mean=default_weights.transforms().mean,
+                    std=default_weights.transforms().std,
                 ),
             ]
         ),
         gpu=transforms_v2.Compose(
             [
                 transforms_v2.RandomResizedCrop(
-                    size=(300, 300),
+                    size=(image_size, image_size),
                     scale=(0.8, 1.0),
                     antialias=True,
                 ),
@@ -564,22 +571,27 @@ B0_AUGMENTATION_EXPERIMENTS_300 = {
                     scale=True,
                 ),
                 transforms_v2.Normalize(
-                    mean=B0_DEFAULT_WEIGHTS.transforms().mean,
-                    std=B0_DEFAULT_WEIGHTS.transforms().std,
+                    mean=default_weights.transforms().mean,
+                    std=default_weights.transforms().std,
                 ),
             ]
         ),
-    ),
-    # --------
-    # experiment3:
-    # Initial reize 343x343
-    # Random Crop and Horizontal Flip + mild Color Jitter + Ratation + Affine
-    # --------
-    "experiment_3_300": AugmentationConfig(
+    )
+
+
+# --------
+# experiment 3:
+# Initial reize (alters aspect ratio)
+# Random Crop and Horizontal Flip + mild Color Jitter + Ratation + Affine
+# --------
+def experiment_3_factory(default_weights, image_size: int) -> AugmentationConfig:
+    validate_factory_args(default_weights, image_size)
+    resize_size = round(image_size * 8 / 7)
+    return AugmentationConfig(
         cpu=transforms.Compose(
             [
-                transforms.Resize((343, 343)),
-                transforms.RandomCrop((300, 300)),
+                transforms.Resize((resize_size, resize_size)),
+                transforms.RandomCrop((image_size, image_size)),
                 transforms.RandomHorizontalFlip(p=0.5),
                 transforms.RandomRotation(
                     degrees=10,
@@ -596,19 +608,19 @@ B0_AUGMENTATION_EXPERIMENTS_300 = {
                 ),
                 transforms.ToTensor(),
                 transforms.Normalize(
-                    mean=B0_DEFAULT_WEIGHTS.transforms().mean,
-                    std=B0_DEFAULT_WEIGHTS.transforms().std,
+                    mean=default_weights.transforms().mean,
+                    std=default_weights.transforms().std,
                 ),
             ]
         ),
         gpu=transforms_v2.Compose(
             [
                 transforms_v2.Resize(
-                    size=(343, 343),
+                    size=(resize_size, resize_size),
                     antialias=True,
                 ),
                 transforms_v2.RandomCrop(
-                    size=(300, 300),
+                    size=(image_size, image_size),
                 ),
                 transforms_v2.RandomHorizontalFlip(p=0.5),
                 transforms_v2.RandomRotation(
@@ -629,35 +641,39 @@ B0_AUGMENTATION_EXPERIMENTS_300 = {
                     scale=True,
                 ),
                 transforms_v2.Normalize(
-                    mean=B0_DEFAULT_WEIGHTS.transforms().mean,
-                    std=B0_DEFAULT_WEIGHTS.transforms().std,
+                    mean=default_weights.transforms().mean,
+                    std=default_weights.transforms().std,
                 ),
             ]
         ),
-    ),
-    # --------
-    # experiment4:
-    # Random Resize Crop 300x300 and Horizontal Flip
-    # --------
-    "experiment_4": AugmentationConfig(
+    )
+
+
+# --------
+# experiment 4:
+# Random Resize Crop + Horizontal Flip
+# --------
+def experiment_4_factory(default_weights, image_size: int) -> AugmentationConfig:
+    validate_factory_args(default_weights, image_size)
+    return AugmentationConfig(
         cpu=transforms.Compose(
             [
                 transforms.RandomResizedCrop(
-                    300,
+                    image_size,
                     scale=(0.8, 1.0),
                 ),
                 transforms.RandomHorizontalFlip(p=0.5),
                 transforms.ToTensor(),
                 transforms.Normalize(
-                    mean=B0_DEFAULT_WEIGHTS.transforms().mean,
-                    std=B0_DEFAULT_WEIGHTS.transforms().std,
+                    mean=default_weights.transforms().mean,
+                    std=default_weights.transforms().std,
                 ),
             ]
         ),
         gpu=transforms_v2.Compose(
             [
                 transforms_v2.RandomResizedCrop(
-                    size=(300, 300),
+                    size=(image_size, image_size),
                     scale=(0.8, 1.0),
                     antialias=True,
                 ),
@@ -667,84 +683,111 @@ B0_AUGMENTATION_EXPERIMENTS_300 = {
                     scale=True,
                 ),
                 transforms_v2.Normalize(
-                    mean=B0_DEFAULT_WEIGHTS.transforms().mean,
-                    std=B0_DEFAULT_WEIGHTS.transforms().std,
+                    mean=default_weights.transforms().mean,
+                    std=default_weights.transforms().std,
                 ),
             ]
         ),
-    ),
-    # --------
-    # experiment5:
-    # Initial reize 343 on short edge- retains aspect ratio
-    # Random Crop 300x300 only
-    # --------
-    "experiment_5": AugmentationConfig(
+    )
+
+
+# --------
+# experiment 5:
+# Initial reize on short edge- retains aspect ratio
+# Random Crop
+# --------
+def experiment_5_factory(default_weights, image_size: int) -> AugmentationConfig:
+    validate_factory_args(default_weights, image_size)
+    resize_size = round(image_size * 8 / 7)
+    return AugmentationConfig(
         cpu=transforms.Compose(
             [
-                transforms.Resize(343),
-                transforms.RandomCrop(300),
+                transforms.Resize(resize_size),
+                transforms.RandomCrop(image_size),
                 transforms.ToTensor(),
                 transforms.Normalize(
-                    mean=B0_DEFAULT_WEIGHTS.transforms().mean,
-                    std=B0_DEFAULT_WEIGHTS.transforms().std,
+                    mean=default_weights.transforms().mean,
+                    std=default_weights.transforms().std,
                 ),
             ]
         ),
         gpu=transforms_v2.Compose(
             [
                 transforms_v2.Resize(
-                    343,
+                    resize_size,
                     antialias=True,
                 ),
                 transforms_v2.RandomCrop(
-                    300,
+                    image_size,
                 ),
                 transforms_v2.ToDtype(
                     torch.float32,
                     scale=True,
                 ),
                 transforms_v2.Normalize(
-                    mean=B0_DEFAULT_WEIGHTS.transforms().mean,
-                    std=B0_DEFAULT_WEIGHTS.transforms().std,
+                    mean=default_weights.transforms().mean,
+                    std=default_weights.transforms().std,
                 ),
             ]
         ),
-    ),
-    # --------
-    # experiment6:
-    # Initial reize 343 on short edge- retains aspect ratio
-    # Center Crop 300x300 + Horizontal Flip only
-    # --------
-    "experiment_6": AugmentationConfig(
+    )
+
+
+# --------
+# experiment 6:
+# Initial reize on short edge- retains aspect ratio
+# Center Crop + Horizontal Flip
+# --------
+def experiment_6_factory(default_weights, image_size: int) -> AugmentationConfig:
+    validate_factory_args(default_weights, image_size)
+    resize_size = round(image_size * 8 / 7)
+    return AugmentationConfig(
         cpu=transforms.Compose(
             [
-                transforms.Resize(343),
-                transforms.CenterCrop(300),
+                transforms.Resize(resize_size),
+                transforms.CenterCrop(image_size),
                 transforms.RandomHorizontalFlip(p=0.5),
                 transforms.ToTensor(),
                 transforms.Normalize(
-                    mean=B0_DEFAULT_WEIGHTS.transforms().mean,
-                    std=B0_DEFAULT_WEIGHTS.transforms().std,
+                    mean=default_weights.transforms().mean,
+                    std=default_weights.transforms().std,
                 ),
             ]
         ),
         gpu=transforms_v2.Compose(
             [
                 transforms_v2.Resize(
-                    343,
+                    resize_size,
                     antialias=True,
                 ),
-                transforms_v2.CenterCrop(300),
+                transforms_v2.CenterCrop(image_size),
                 transforms_v2.RandomHorizontalFlip(p=0.5),
                 transforms_v2.ToDtype(
                     torch.float32,
                     scale=True,
                 ),
                 transforms_v2.Normalize(
-                    mean=B0_DEFAULT_WEIGHTS.transforms().mean,
-                    std=B0_DEFAULT_WEIGHTS.transforms().std,
+                    mean=default_weights.transforms().mean,
+                    std=default_weights.transforms().std,
                 ),
             ]
         ),
-    ),
+    )
+
+
+def validate_factory_args(default_weights, image_size):
+    if not (default_weights and image_size):
+        raise ValueError(
+            f"Augmentation pipeline generation requires valid values for both default_weights: "
+            f"{default_weights} and image_size: {image_size} to be set"
+        )
+
+
+AUGMENTATION_EXPERIMENTS = {
+    "experiment_1": experiment_1_factory,
+    "experiment_2": experiment_2_factory,
+    "experiment_3": experiment_3_factory,
+    "experiment_4": experiment_4_factory,
+    "experiment_5": experiment_5_factory,
+    "experiment_6": experiment_6_factory,
 }
